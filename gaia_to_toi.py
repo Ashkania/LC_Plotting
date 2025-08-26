@@ -47,10 +47,16 @@ def parse_command_line():
         help='The path containing .h5 lc files.'
     )
     parser.add_argument(
-        '--gaia-toi-file',
-        default='output.txt',
+        '--gaia-tic-file',
+        default='gaia_tic.txt',
         help='The output file to write gaia to tic mappings.'
     )
+    parser.add_argument(
+        '--gaia-toi-file',
+        default='gaia_toi.txt',
+        help='The output file to write gaia to toi mappings.'
+    )
+
 
     return parser.parse_args()
 
@@ -167,7 +173,7 @@ if __name__ == '__main__':
     n = 0
     for gaia_id in gaia_ids:
         n += 1
-        if n % 100 == 0:
+        if n % 10 == 0:
             print(f'TIC Query result: passed {n}')
 
         query_result = tap_vizier_query(
@@ -186,13 +192,16 @@ if __name__ == '__main__':
 
     print(f'Found {len(gaia_tic)} unique tic ids. now querying TIC for periods')
 
+    with open(cmdline_args.gaia_tic_file, 'w') as file:
+        for gaia_id, tic_id in gaia_tic.items():
+            file.write(f"{gaia_id}, {tic_id}\n")
 
     gaia_tic_period = {}
 
     n = 0
     for gaia_id, tic_id in gaia_tic.items():
         n += 1
-        if n % 100 == 0:
+        if n % 10 == 0:
             print(f'TOI Query result: passed {n}')
 
         query_result = tap_query(
