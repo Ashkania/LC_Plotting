@@ -32,6 +32,8 @@ import glob
 import ast
 import numpy
 import tenacity
+import pandas as pd
+from astropy.io import fits
 
 from configargparse import ArgumentParser, DefaultsFormatter
 
@@ -60,6 +62,7 @@ def parse_command_line():
 
     return parser.parse_args()
 
+# general-purpose function for any TAP service
 @tenacity.retry(wait=tenacity.wait_fixed(2), stop=tenacity.stop_after_attempt(5), reraise=True)
 def tap_query(url,
               headers,
@@ -95,6 +98,7 @@ def tap_query(url,
 
     return results
 
+# specialized for Vizier TAP service
 @tenacity.retry(wait=tenacity.wait_fixed(2), stop=tenacity.stop_after_attempt(5), reraise=True)
 def tap_vizier_query(url='http://tapvizier.u-strasbg.fr/TAPVizieR/tap/',
                      headers='*',
@@ -166,17 +170,16 @@ if __name__ == '__main__':
     }
     # gaia_ids = {1316714794020532096, ...}
 
-    print(f'Found {len(gaia_ids)} unique gaia ids, now querying TIC')
+    print(f'Found {len(gaia_ids)} unique gaia ids. Now querying TIC\n')
 
-    gaia_tic = {}
+    tic_gaia = {}
 
     n = 0
     for gaia_id in gaia_ids:
         n += 1
-        if n % 10 == 0:
-            print(f'TIC Query result: passed {n}')
+        if n % 10 == 0: print(f'TIC Query result: passed {n}')
 
-        query_result = tap_vizier_query(
+        query_gaia_to_tic = tap_vizier_query(
             url='http://tapvizier.u-strasbg.fr/TAPVizieR/tap/',
             headers='*', # or just TIC column?
             table_database='"IV/39/tic82"', 
@@ -186,38 +189,94 @@ if __name__ == '__main__':
         # it returns an empty result if nothing returned, not an error
         # so no need to try n except
 
-        if len(query_result) > 0:
-            gaia_tic[gaia_id] = query_result['TIC'].data[0]
+        if len(query_gaia_to_tic) > 0:
+            tic_id = query_gaia_to_tic['TIC'].data[0]
+            tic_gaia[tic_id] = gaia_id
 
 
-    print(f'Found {len(gaia_tic)} unique tic ids. now querying TIC for periods')
+    # print(f'Found {len(gaia_tic)} unique tic ids. Now querying TIC for periods')
+    print(f'Found {len(tic_gaia)} unique TIC ids. Now querying TOI in FOV of LCs in the LC catalog\n')
+
 
     with open(cmdline_args.gaia_tic_file, 'w') as file:
-        for gaia_id, tic_id in gaia_tic.items():
+        for gaia_id, tic_id in tic_gaia.items():
             file.write(f"{gaia_id}, {tic_id}\n")
 
     gaia_tic_period = {}
 
-    n = 0
-    for gaia_id, tic_id in gaia_tic.items():
-        n += 1
-        if n % 10 == 0:
-            print(f'TOI Query result: passed {n}')
+    # n = 0
+    # for gaia_id, tic_id in gaia_tic.items():
+    #     n += 1
+    #     if n % 10 == 0: print(f'TOI Query result: passed {n}')
 
-        query_result = tap_query(
-            url='https://exoplanetarchive.ipac.caltech.edu/TAP',
-            headers='*',
-            table_database='toi',
-            constraints=['tid=' + str(tic_id)]
+    #     query_result = tap_query(
+    #         url='https://exoplanetarchive.ipac.caltech.edu/TAP',
+    #         headers='*',
+    #         table_database='toi',
+    #         constraints=['tid=' + str(tic_id)]
+    #     )
+
+    #     if len(query_result) > 0:
+    #         gaia_tic_period[(gaia_id, tic_id)] = query_result['pl_orbper'].data[0]
+
+    # print(
+    #     f'Found {len(gaia_tic_period)} TOI with their periods. now writing to file '
+    #     f'as: Gaia id, TOI id, Period'
+    #       )
+
+    # with open(cmdline_args.gaia_toi_file, 'w') as file:
+    #     for (gaia_id, tic_id), period in gaia_tic_period.items():
+    #         file.write(f"{gaia_id}, {tic_id}, {period}\n")
+
+#################################################################33
+    # Try to first query all toi in a spacial constraint, then check if 
+    # we have any LC in that list
+
+    with fits.open('lc_catalog.fits') as hdul:
+        lc_data = hdul[1].data
+
+        ra_min, ra_max = lc_data['ra'].min(), lc_data['ra'].max()
+        dec_min, dec_max = lc_data['dec'].min(), lc_data['dec'].max()
+        mag_min, mag_max = lc_data['phot_g_mean_mag'].min(), lc_data['phot_g_mean_mag'].max()
+
+        print(f'Ranges in lc catalog:::\n'
+              f'ra: ({ra_min:.2f}, {ra_max:.2f})\n'
+              f'dec: ({dec_min:.2f}, {dec_max:.2f})\n'
+              f'mag: ({mag_min:.2f}, {mag_max:.2f})\n'
         )
 
-        if len(query_result) > 0:
-            gaia_tic_period[(gaia_id, tic_id)] = query_result['pl_orbper'].data[0]
+    query_toi_in_fov = tap_query(
+        url='https://exoplanetarchive.ipac.caltech.edu/TAP',
+        headers='*',
+        table_database='toi',
+        constraints=[
+            f"RA BETWEEN {ra_min} AND {ra_max}",
+            f"DEC BETWEEN {dec_min} AND {dec_max}",
+            f"ST_TMAG < {mag_max} + 1.0"
+        ]
+    )
 
-    print(
-        f'Found {len(gaia_tic_period)} TOI with their periods. now writing to file '
-        f'as: Gaia id, TOI id, Period'
-          )
+    print(f'Found {len(query_toi_in_fov)} TOIs in the specified region.'
+          f' Now check LCs for each TOI to find matches.\n')
+    # df_toi = query_toi_in_fov.to_table().to_pandas()
+    # print(df_toi.columns)
+
+    # Now, go over the query_result and for each column tid, check if we have it in
+    # the values of gaia_tic
+
+    tic_gaia_period = {}
+
+    for tic in query_toi_in_fov['tid']: # Instead of tic, we have tid in the query, and also toi
+        if tic in tic_gaia:
+            print(f'Found TOI with tid {tic} and GAIA id: {tic_gaia[tic]} in our LC catalog')
+            # gaia_id = query_result[query_result['tid'] == tid]['gaia_id'].values[0]
+            # tic_id = tid
+            # tic_gaia_period[(tic, tic_gaia[tic])] = query['pl_orbper'].data[0]
+
+    # print(
+    #     f'Found {len(gaia_tic_period)} TOI with their periods. now writing to file '
+    #     f'as: Gaia id, TOI id, Period'
+    #       )
 
     with open(cmdline_args.gaia_toi_file, 'w') as file:
         for (gaia_id, tic_id), period in gaia_tic_period.items():
