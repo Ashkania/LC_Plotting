@@ -72,34 +72,34 @@ def parse_command_line():
     return parser.parse_args()
 
 # general-purpose function for any TAP service
-@tenacity.retry(wait=tenacity.wait_fixed(2), stop=tenacity.stop_after_attempt(5), reraise=True)
-def tap_query(url,
-              headers,
-              table_database,
-              constraints=None):
-    """
-        The TAP query to run. All queries must have valid ADQL, which takes the form:
-        SELECT <column list> FROM <table> WHERE <constraints>
+# @tenacity.retry(wait=tenacity.wait_fixed(2), stop=tenacity.stop_after_attempt(5), reraise=True)
+# def tap_query(url,
+#               headers,
+#               table_database,
+#               constraints=None):
+#     """
+#         The TAP query to run. All queries must have valid ADQL, which takes the form:
+#         SELECT <column list> FROM <table> WHERE <constraints>
 
-        Args:
-            - url: The url to use for TAP query
-            - headers (list) : The table column headers to use from given table database
-            - table_database: The table database name to use
-            - constraints (str list): The given constraints to use for TAP query
+#         Args:
+#             - url: The url to use for TAP query
+#             - headers (list) : The table column headers to use from given table database
+#             - table_database: The table database name to use
+#             - constraints (str list): The given constraints to use for TAP query
 
-        Returns:
-            - results: The TAP query results as a VOTable
-    """
+#         Returns:
+#             - results: The TAP query results as a VOTable
+#     """
 
-    service = pyvo.dal.TAPService(url)
+#     service = pyvo.dal.TAPService(url)
 
-    headers = ", ".join(str(item) for item in headers)
-    constraints = " AND ".join(str(item) for item in constraints)
-    query = "SELECT " + str(headers) + " FROM " + str(table_database) + " WHERE " + str(constraints)
+#     headers = ", ".join(str(item) for item in headers)
+#     constraints = " AND ".join(str(item) for item in constraints)
+#     query = "SELECT " + str(headers) + " FROM " + str(table_database) + " WHERE " + str(constraints)
     
-    results = service.search(query)
+#     results = service.search(query)
 
-    return results
+#     return results
 
 # specialized for Vizier TAP service
 @tenacity.retry(wait=tenacity.wait_fixed(2), stop=tenacity.stop_after_attempt(5), reraise=True)
@@ -265,7 +265,7 @@ def query_vizier_once(gaia_ids, tic_gaia_file, fov_mag_range):
     
 def query_toi_in_fov(tic_gaia, toi_gaia_period_file, fov_mag_range):
 
-    query_toi_in_fov = tap_query(
+    query_toi_in_fov = tap_vizier_query(
         url='https://exoplanetarchive.ipac.caltech.edu/TAP',
         headers='*',
         table_database='toi',
@@ -294,7 +294,7 @@ def query_toi_in_fov(tic_gaia, toi_gaia_period_file, fov_mag_range):
             tic_gaia_period[(row['tid'], tic_gaia[row['tid']])] = row['pl_orbper']
 
     print(
-        f'Found {len(tic_gaia_period)} TOI with their periods. now writing to file '
+        f'Found {len(tic_gaia_period)} TOI with their periods. Now writing to file '
         f'as: TIC, Gaia id, Period'
     )
 
@@ -345,7 +345,6 @@ def main():
         print("Error: --lc-path and --lc-catalog are required")
         exit(1)
 
-
     gaia_ids = lcs_to_gaia_ids(cmdline_args.lc_path)
     fov_mag_range = find_fov_of_lcs(cmdline_args.lc_catalog)
 
@@ -362,6 +361,21 @@ def main():
         tic_gaia = query_vizier_once(gaia_ids, cmdline_args.tic_gaia_file, fov_mag_range)
 
     _ = query_toi_in_fov(tic_gaia, cmdline_args.toi_gaia_period_file, fov_mag_range)
+
+
+    query_test = tap_vizier_query(
+    url='https://mast.stsci.edu/tap',
+    headers='*',
+    table_database='tic_v8',
+    constraints=[
+        f"RA BETWEEN 10 AND 12",
+        f"DEC BETWEEN 15 AND 18",
+        f"ST_TMAG < 10"
+        ]
+    )
+    df_test = query_test.to_table().to_pandas()
+    print(df_test.columns)
+
 
 
 if __name__ == '__main__':
