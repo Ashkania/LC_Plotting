@@ -43,17 +43,17 @@ def parse_command_line():
         help='The path containing .h5 lc files.'
     )
     parser.add_argument(
-        '--tic-gaia-file',
+        '--tic-gaia-fname',
         default='tic_gaia.txt',
         help='The output file to write tic to gaia mappings.'
     )
     parser.add_argument(
-        '--ready-tic-gaia-file',
+        '--tic-gaia-file',
         default=False,
         help='if we already have it, specify the file path'
     )
     parser.add_argument(
-        '--toi-gaia-period-file',
+        '--toi-gaia-period-fname',
         default='toi_gaia_period.txt',
         help='The output file to write toi, gaia, period mappings.'
     )
@@ -187,7 +187,7 @@ def find_fov_of_lcs(lc_catalog):
 # --- For each GAIA ID, query vizier to find its TIC (not efficient sometimes) ---#
 # ------------------------------------------------------------------#
 
-def query_vizier_n_times(gaia_ids, tic_gaia_file):
+def query_vizier_n_times(gaia_ids, tic_gaia_fname):
 
     tic_gaia = {}
 
@@ -209,7 +209,7 @@ def query_vizier_n_times(gaia_ids, tic_gaia_file):
 
     print(f'Found {len(tic_gaia)} unique TIC ids. Now querying TOI in FOV of LCs in the LC catalog\n')
 
-    with open(tic_gaia_file, 'w') as file:
+    with open(tic_gaia_fname, 'w') as file:
         for tic_id, gaia_id in tic_gaia.items():
             file.write(f"{tic_id}, {gaia_id}\n")
     
@@ -223,7 +223,7 @@ def query_vizier_n_times(gaia_ids, tic_gaia_file):
 
 
 
-def query_vizier_once(gaia_ids, tic_gaia_file, fov_mag_range):
+def query_vizier_once(gaia_ids, tic_gaia_fname, fov_mag_range):
 
     tic_gaia = {}
 
@@ -250,7 +250,7 @@ def query_vizier_once(gaia_ids, tic_gaia_file, fov_mag_range):
     print(f'Found {len(tic_gaia)} matched TICs.\n')
 
 
-    with open(tic_gaia_file, 'w') as file:
+    with open(tic_gaia_fname, 'w') as file:
         for tic_id, gaia_id in tic_gaia.items():
             file.write(f"{tic_id}, {gaia_id}\n")
 
@@ -262,8 +262,8 @@ def query_vizier_once(gaia_ids, tic_gaia_file, fov_mag_range):
 # --- FOV of the LCs to find the TOI IDs in that FOV,   ------------#
 # --- then check to see if any of them exist in our LCs ------------#
 # ------------------------------------------------------------------#
-    
-def query_toi_in_fov(tic_gaia, toi_gaia_period_file, fov_mag_range):
+
+def query_toi_in_fov(tic_gaia, toi_gaia_period_fname, fov_mag_range):
 
     query_toi_in_fov = tap_vizier_query(
         url='https://exoplanetarchive.ipac.caltech.edu/TAP',
@@ -298,7 +298,7 @@ def query_toi_in_fov(tic_gaia, toi_gaia_period_file, fov_mag_range):
         f'as: TIC, Gaia id, Period'
     )
 
-    with open(toi_gaia_period_file, 'w') as file:
+    with open(toi_gaia_period_fname, 'w') as file:
         for (tic_id, gaia_id), period in tic_gaia_period.items():
             file.write(f"{tic_id}, {gaia_id}, {period}\n")
 
@@ -348,19 +348,19 @@ def main():
     gaia_ids = lcs_to_gaia_ids(cmdline_args.lc_path)
     fov_mag_range = find_fov_of_lcs(cmdline_args.lc_catalog)
 
-    if cmdline_args.ready_tic_gaia_file:
+    if cmdline_args.tic_gaia_file:
         tic_gaia = {}
-        with open(cmdline_args.ready_tic_gaia_file, 'r') as file:
+        with open(cmdline_args.tic_gaia_file, 'r') as file:
             for line in file:
                 tic_id, gaia_id = map(int, line.strip().split(', '))
                 tic_gaia[tic_id] = gaia_id
 
     elif len(gaia_ids) < 1000:  ### should find the efficient threshold
-        tic_gaia = query_vizier_n_times(gaia_ids, cmdline_args.tic_gaia_file)
+        tic_gaia = query_vizier_n_times(gaia_ids, cmdline_args.tic_gaia_fname)
     else:
-        tic_gaia = query_vizier_once(gaia_ids, cmdline_args.tic_gaia_file, fov_mag_range)
+        tic_gaia = query_vizier_once(gaia_ids, cmdline_args.tic_gaia_fname, fov_mag_range)
 
-    _ = query_toi_in_fov(tic_gaia, cmdline_args.toi_gaia_period_file, fov_mag_range)
+    _ = query_toi_in_fov(tic_gaia, cmdline_args.toi_gaia_period_fname, fov_mag_range)
 
 
     query_test = tap_vizier_query(
