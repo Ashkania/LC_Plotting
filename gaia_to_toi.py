@@ -1,21 +1,26 @@
 #!/usr/bin/env python3
 
 """
-   Utilities for plotting individual lightcurves.
-   It goes over the LCs, extract the Gaia Ids, then run tap_vizier_query
-   for querying TIC for those ids.
-   Then, it queries TOI table in exoplanet archive and extract the objects
-   in the FOV of the LCs and check if any of those TOI have a TIC id in our
-   list. If so, it extracts the period.
-   Also, it writes two files:
-       1- tic_gaia.txt: tic id, gaia id (for later use cases)
-       2- toi_gaia_period.txt: toi id, gaia id, period
+    Utilities for plotting individual lightcurves.
+    It goes over the LCs, extract the Gaia Ids, then run tap_vizier_query
+    for querying TIC for those ids.
+    Then, it queries TOI table in exoplanet archive and extract the objects
+    in the FOV of the LCs and check if any of those TOI have a TIC id in our
+    list. If so, it extracts the period.
+    Also, it writes two files:
+        1- tic_gaia.txt: tic id, gaia id (for later use cases)
+        2- toi_gaia_period.txt: toi id, gaia id, period
 
-   Check this link for all tables that you may need:
-   https://tapvizier.cds.unistra.fr/adql/
-   more info in discord:
-   https://discord.com/channels/581176949184135229/1291434287614398494/1356713434086903970
+    Check this link for all tables that you may need:
+    https://tapvizier.cds.unistra.fr/adql/
+    more info in discord:
+    https://discord.com/channels/581176949184135229/1291434287614398494/1356713434086903970
 
+    Example usage:
+    1. When you don't have tic_gaia.txt file:
+            python gaia_to_toi.py --lc-path /path/to/lcs/ --lc-catalog /path/to/lc_catalog.fits
+        2. When you already have tic_gaia.txt file:
+            python gaia_to_toi.py --lc-path /path/to/lcs/ --lc-catalog /path/to/lc_catalog.fits --tic-gaia-file /path/to/tic_gaia.txt
 """
 
 
@@ -221,8 +226,6 @@ def query_vizier_n_times(gaia_ids, tic_gaia_fname):
 # --- FOV of the LCs and then find the TICs from the results -------#
 # ------------------------------------------------------------------#
 
-
-
 def query_vizier_once(gaia_ids, tic_gaia_fname, fov_mag_range):
 
     tic_gaia = {}
@@ -302,7 +305,6 @@ def query_toi_in_fov(tic_gaia, toi_gaia_period_fname, fov_mag_range):
         for (tic_id, gaia_id), period in tic_gaia_period.items():
             file.write(f"{tic_id}, {gaia_id}, {period}\n")
 
-    return tic_gaia_period
 
 
 # -----------------------------------------------------------------#
@@ -360,21 +362,23 @@ def main():
     else:
         tic_gaia = query_vizier_once(gaia_ids, cmdline_args.tic_gaia_fname, fov_mag_range)
 
-    _ = query_toi_in_fov(tic_gaia, cmdline_args.toi_gaia_period_fname, fov_mag_range)
+    query_toi_in_fov(tic_gaia, cmdline_args.toi_gaia_period_fname, fov_mag_range)
 
 
-    query_test = tap_vizier_query(
-    url='https://mast.stsci.edu/tap',
-    headers='*',
-    table_database='tic_v8',
-    constraints=[
-        f"RA BETWEEN 10 AND 12",
-        f"DEC BETWEEN 15 AND 18",
-        f"ST_TMAG < 10"
-        ]
-    )
-    df_test = query_test.to_table().to_pandas()
-    print(df_test.columns)
+    ####### What is the point of this? which is not working anyway!
+    
+    # query_test = tap_vizier_query(
+    # url='https://mast.stsci.edu/api/v0/tap',
+    # headers='*',
+    # table_database='tic_v8',
+    # constraints=[
+    #     f"RA BETWEEN 10 AND 12",
+    #     f"DEC BETWEEN 15 AND 18",
+    #     f"ST_TMAG < 10"
+    #     ]
+    # )
+    # df_test = query_test.to_table().to_pandas()
+    # print(df_test.columns)
 
 
 
