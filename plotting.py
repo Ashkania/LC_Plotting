@@ -26,6 +26,11 @@ def parse_arguments():
         default=0,
         help="Aperture number to plot (default: 0)"
         )
+    parser.add_argument(
+        "--title",
+        type=str,
+        help="Title for the LC plot"
+    )
     
     return parser.parse_args()
 
@@ -37,12 +42,13 @@ def read_lc_from_hdf5(hdf5_file, aperture=0):
 
 def plot_light_curve(bjd, mag, title="Light Curve", xlabel="BJD", ylabel="Magnitude"):
     plt.figure(figsize=(10, 5))
-    plt.scatter(bjd, mag, s=1, color='blue')
+    plt.scatter(bjd, mag, s=10, color='green')
     plt.gca().invert_yaxis()  # Magnitude axis is inverted
     plt.title(title)
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
+    plt.xlabel(xlabel, fontdict={"fontweight":"bold", 'fontsize':14})
+    plt.ylabel(ylabel, fontdict={"fontweight":"bold", 'fontsize':14})
     plt.grid(True)
+    plt.savefig(f'{title}',dpi=400)
     plt.show()
 
 if __name__ == "__main__":
@@ -50,6 +56,7 @@ if __name__ == "__main__":
     args = parse_arguments()
     hdf5_file = args.hdf5_file
     aperture = args.aperture
+    title=args.title
 
     bjd, mag = read_lc_from_hdf5(hdf5_file, aperture)
-    plot_light_curve(bjd, mag, title=f"Light Curve for Aperture {aperture}")
+    plot_light_curve(bjd, mag, title=title)
