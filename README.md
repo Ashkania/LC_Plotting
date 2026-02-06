@@ -1,5 +1,7 @@
 # plotting
 
+A: Running gaia_to_toi.py
+
 Utilities for plotting individual lightcurves.
    It goes over the LCs, extract the Gaia Ids, then run tap_vizier_query
    for querying TIC for those ids.  
@@ -14,3 +16,7 @@ Utilities for plotting individual lightcurves.
 
    Check this link for all tables that you may need:
    https://tapvizier.cds.unistra.fr/adql/
+
+
+B: Runnig plotting.py
+
