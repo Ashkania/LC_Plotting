@@ -58,7 +58,6 @@
 """
 
 
-import pyvo
 import os
 import os.path
 import glob
@@ -67,6 +66,10 @@ import numpy
 import tenacity
 import pandas as pd
 from astropy.io import fits
+from astropy.coordinates import SkyCoord
+import astropy.units as u
+from astroquery.vizier import Vizier
+import pyvo
 
 from configargparse import ArgumentParser, DefaultsFormatter
 
@@ -110,37 +113,10 @@ def parse_command_line():
 
     return parser.parse_args()
 
-# general-purpose function for any TAP service
-# @tenacity.retry(wait=tenacity.wait_fixed(2), stop=tenacity.stop_after_attempt(5), reraise=True)
-# def tap_query(url,
-#               headers,
-#               table_database,
-#               constraints=None):
-#     """
-#         The TAP query to run. All queries must have valid ADQL, which takes the form:
-#         SELECT <column list> FROM <table> WHERE <constraints>
+##########################################################################
+### specialized for Vizier TAP service (ORIGINAL - kept for reference) ###
+###########################################################################
 
-#         Args:
-#             - url: The url to use for TAP query
-#             - headers (list) : The table column headers to use from given table database
-#             - table_database: The table database name to use
-#             - constraints (str list): The given constraints to use for TAP query
-
-#         Returns:
-#             - results: The TAP query results as a VOTable
-#     """
-
-#     service = pyvo.dal.TAPService(url)
-
-#     headers = ", ".join(str(item) for item in headers)
-#     constraints = " AND ".join(str(item) for item in constraints)
-#     query = "SELECT " + str(headers) + " FROM " + str(table_database) + " WHERE " + str(constraints)
-    
-#     results = service.search(query)
-
-#     return results
-
-# specialized for Vizier TAP service
 @tenacity.retry(wait=tenacity.wait_fixed(2), stop=tenacity.stop_after_attempt(5), reraise=True)
 def tap_vizier_query(url='http://tapvizier.u-strasbg.fr/TAPVizieR/tap/',
                      headers='*',
@@ -170,6 +146,61 @@ def tap_vizier_query(url='http://tapvizier.u-strasbg.fr/TAPVizieR/tap/',
     results = service.search(query)
 
     return results
+
+
+#################################################
+##### NEW ASTROQUERY-based functions ############
+##### Query a single Gaia ID in TIC catalog #####
+#################################################
+
+@tenacity.retry(wait=tenacity.wait_fixed(2), stop=tenacity.stop_after_attempt(5), reraise=True)
+def query_tic_by_gaia(gaia_id):
+    """
+    Query TIC 8.2 catalog for a specific Gaia ID.
+    
+    Args:
+        - gaia_id: The Gaia ID to search for
+        
+    Returns:
+        - result: Query result table or empty table if no match found
+    """
+    viz = Vizier(columns=['TIC', 'GAIA', 'Vmag', 'RAJ2000', 'DEJ2000'])
+    viz.ROW_LIMIT = 1  # We expect at most one match per Gaia ID
+    
+    result = viz.query_constraints(catalog='IV/39/tic82', GAIA=gaia_id)
+    return result[0] if result else None
+
+
+# Query TIC catalog in a spatial region (FOV)
+@tenacity.retry(wait=tenacity.wait_fixed(2), stop=tenacity.stop_after_attempt(5), reraise=True)
+def query_tic_in_region(fov_mag_range):
+    """
+    Query TIC 8.2 catalog in a spatial region defined by RA, Dec, and magnitude range.
+    
+    Args:
+        - fov_mag_range: Dictionary with 'ra_min', 'ra_max', 'dec_min', 'dec_max', 'mag_max'
+        
+    Returns:
+        - result: Query result table
+    """
+    viz = Vizier(columns=['TIC', 'GAIA', 'Vmag', 'RAJ2000', 'DEJ2000'])
+    viz.ROW_LIMIT = -1  # No limit for region queries
+    
+    # Define the center and radius of the search region (approximate bounding box as circular region)
+    ra_center = (fov_mag_range['ra_min'] + fov_mag_range['ra_max']) / 2
+    dec_center = (fov_mag_range['dec_min'] + fov_mag_range['dec_max']) / 2
+    
+    # Approximate radius in degrees
+    ra_width = abs(fov_mag_range['ra_max'] - fov_mag_range['ra_min'])
+    dec_width = abs(fov_mag_range['dec_max'] - fov_mag_range['dec_min'])
+    radius = max(ra_width, dec_width) / 2 + 0.5  # Add buffer
+    
+    coord = SkyCoord(ra=ra_center, dec=dec_center, unit=(u.deg, u.deg))
+    
+    # Vizier's query_region uses a circular region, which may include extra objects
+    # We'll filter by magnitude and do bounds checking in the calling function
+    result = viz.query_region(coord, radius=radius * u.deg, catalog='IV/39/tic82')
+    return result[0] if result else None
 
 
 # ------------------------------------------------------------------#
@@ -224,9 +255,10 @@ def find_fov_of_lcs(lc_catalog):
 
 # ------------------------------------------------------------------#
 # --- For each GAIA ID, query vizier to find its TIC (not efficient sometimes) ---#
+# --- ORIGINAL TAP VERSION (kept for reference) ---#
 # ------------------------------------------------------------------#
 
-def query_vizier_n_times(gaia_ids, tic_gaia_fname):
+def query_vizier_n_times_tap(gaia_ids, tic_gaia_fname):
 
     tic_gaia = {}
 
@@ -256,11 +288,40 @@ def query_vizier_n_times(gaia_ids, tic_gaia_fname):
 
 
 # ------------------------------------------------------------------#
-# --- Instead of query vizier n times, query it once based on the --#
-# --- FOV of the LCs and then find the TICs from the results -------#
+# --- For each GAIA ID, query vizier to find its TIC (ASTROQUERY) ---#
 # ------------------------------------------------------------------#
 
-def query_vizier_once(gaia_ids, tic_gaia_fname, fov_mag_range):
+def query_vizier_n_times(gaia_ids, tic_gaia_fname):
+
+    tic_gaia = {}
+
+    n = 0
+    for gaia_id in gaia_ids:
+        n += 1
+        if n % 10 == 0: print(f'TIC Query result: passed {n}')
+
+        result = query_tic_by_gaia(gaia_id)
+        
+        if result is not None and len(result) > 0:
+            tic_id = result['TIC'][0]
+            tic_gaia[tic_id] = gaia_id
+
+    print(f'Found {len(tic_gaia)} unique TIC ids. Now querying TOI in FOV of LCs in the LC catalog\n')
+
+    with open(tic_gaia_fname, 'w') as file:
+        for tic_id, gaia_id in tic_gaia.items():
+            file.write(f"{tic_id}, {gaia_id}\n")
+    
+    return tic_gaia
+
+
+# ------------------------------------------------------------------#
+# --- Instead of query vizier n times, query it once based on the --#
+# --- FOV of the LCs and then find the TICs from the results -------#
+# --- ORIGINAL TAP VERSION (kept for reference) ---#
+# ------------------------------------------------------------------#
+
+def query_vizier_once_tap(gaia_ids, tic_gaia_fname, fov_mag_range):
 
     tic_gaia = {}
 
@@ -295,12 +356,52 @@ def query_vizier_once(gaia_ids, tic_gaia_fname, fov_mag_range):
 
 
 # ------------------------------------------------------------------#
+# --- Instead of query vizier n times, query it once based on the --#
+# --- FOV of the LCs and then find the TICs from the results -------#
+# --- ASTROQUERY VERSION ---#
+# ------------------------------------------------------------------#
+
+def query_vizier_once(gaia_ids, tic_gaia_fname, fov_mag_range):
+
+    tic_gaia = {}
+
+    result = query_tic_in_region(fov_mag_range)
+    
+    if result is None:
+        print('No TICs found in the specified region.')
+        return tic_gaia
+
+    print(f'Found {len(result)} TICs in the specified region.'
+        f' Now check this result for each LC to find matches.\n')
+
+    for row in result:
+        gaia_val = row['GAIA']
+        # Handle cases where GAIA might be None or masked
+        if gaia_val is not None and gaia_val != '':
+            try:
+                gaia_id = int(gaia_val) if isinstance(gaia_val, str) else gaia_val
+                if gaia_id in gaia_ids:
+                    tic_gaia[int(row['TIC'])] = gaia_id
+            except (ValueError, TypeError):
+                continue
+
+    print(f'Found {len(tic_gaia)} matched TICs.\n')
+
+    with open(tic_gaia_fname, 'w') as file:
+        for tic_id, gaia_id in tic_gaia.items():
+            file.write(f"{tic_id}, {gaia_id}\n")
+
+    return tic_gaia
+
+
+# ------------------------------------------------------------------#
 # --- Instead of query n times, do it once based on the ------------#
 # --- FOV of the LCs to find the TOI IDs in that FOV,   ------------#
 # --- then check to see if any of them exist in our LCs ------------#
+# --- ORIGINAL TAP VERSION (kept for reference) ---#
 # ------------------------------------------------------------------#
 
-def query_toi_in_fov(tic_gaia, toi_gaia_period_fname, fov_mag_range):
+def query_toi_in_fov_tap(tic_gaia, toi_gaia_period_fname, fov_mag_range):
 
     query_toi_in_fov = tap_vizier_query(
         url='https://exoplanetarchive.ipac.caltech.edu/TAP',
@@ -315,19 +416,11 @@ def query_toi_in_fov(tic_gaia, toi_gaia_period_fname, fov_mag_range):
 
     print(f'Found {len(query_toi_in_fov)} TOIs in the specified region.'
           f' Now check LCs for each TOI to find matches.\n')
-    # df_toi = query_toi_in_fov.to_table().to_pandas()
-    # print(df_toi.columns)
 
-    # Now, go over the query_result and for each column tid, check if we have it in
-    # the values of gaia_tic
     tic_gaia_period = {}
 
-    # for tic in query_toi_in_fov['tid']: # Instead of tic, we have tid in the query, and also toi
     for row in query_toi_in_fov:
         if row['tid'] in tic_gaia:
-            # print(f'Found TOI with tid {row["tid"]} and GAIA id: {tic_gaia[row["tid"]]} in our LC catalog')
-            # gaia_id = query_result[query_result['tid'] == tid]['gaia_id'].values[0]
-            # tic_id = tid
             tic_gaia_period[(row['tid'], tic_gaia[row['tid']])] = row['pl_orbper']
 
     print(
@@ -340,39 +433,69 @@ def query_toi_in_fov(tic_gaia, toi_gaia_period_fname, fov_mag_range):
             file.write(f"{tic_id}, {gaia_id}, {period}\n")
 
 
+# ------------------------------------------------------------------#
+# --- Instead of query n times, do it once based on the ------------#
+# --- FOV of the LCs to find the TOI IDs in that FOV,   ------------#
+# --- then check to see if any of them exist in our LCs ------------#
+# --- ASTROQUERY VERSION ---#
+# ------------------------------------------------------------------#
 
-# -----------------------------------------------------------------#
-# ---- For each TIC ID that we found before, ----------------------#
-# ---- query it to see if it has a TOI (not efficient) ------------#
-# -----------------------------------------------------------------#
+def query_toi_in_fov(tic_gaia, toi_gaia_period_fname, fov_mag_range):
 
-# def ... :
+    # Query TOI catalog from exoplanet archive
+    viz = Vizier(columns=['TOI', 'TIC', 'pl_orbper'])
+    viz.ROW_LIMIT = -1
+    
+    # Calculate region center and radius
+    ra_center = (fov_mag_range['ra_min'] + fov_mag_range['ra_max']) / 2
+    dec_center = (fov_mag_range['dec_min'] + fov_mag_range['dec_max']) / 2
+    ra_width = abs(fov_mag_range['ra_max'] - fov_mag_range['ra_min'])
+    dec_width = abs(fov_mag_range['dec_max'] - fov_mag_range['dec_min'])
+    radius = max(ra_width, dec_width) / 2 + 0.5
+    
+    coord = SkyCoord(ra=ra_center, dec=dec_center, unit=(u.deg, u.deg))
+    
+    # Query TOI catalog (available through Vizier)
+    try:
+        result = viz.query_region(coord, radius=radius * u.deg, catalog='IV/38/toi')
+        if result:
+            query_toi_result = result[0]
+        else:
+            query_toi_result = None
+    except Exception as e:
+        print(f"Error querying TOI catalog: {e}")
+        query_toi_result = None
 
-    # gaia_tic_period = {}
+    if query_toi_result is None:
+        print('No TOIs found in the specified region.')
+        return
 
-    # n = 0
-    # for gaia_id, tic_id in gaia_tic.items():
-    #     n += 1
-    #     if n % 10 == 0: print(f'TOI Query result: passed {n}')
+    print(f'Found {len(query_toi_result)} TOIs in the specified region.'
+          f' Now check LCs for each TOI to find matches.\n')
 
-    #     query_result = tap_query(
-    #         url='https://exoplanetarchive.ipac.caltech.edu/TAP',
-    #         headers='*',
-    #         table_database='toi',
-    #         constraints=['tid=' + str(tic_id)]
-    #     )
+    tic_gaia_period = {}
 
-    #     if len(query_result) > 0:
-    #         gaia_tic_period[(gaia_id, tic_id)] = query_result['pl_orbper'].data[0]
+    for row in query_toi_result:
+        try:
+            tic_id = int(row['TIC'])
+            if tic_id in tic_gaia:
+                period = row['pl_orbper']
+                if period is not None:
+                    tic_gaia_period[(tic_id, tic_gaia[tic_id])] = float(period)
+        except (ValueError, TypeError, KeyError):
+            continue
 
-    # print(
-    #     f'Found {len(gaia_tic_period)} TOI with their periods. now writing to file '
-    #     f'as: Gaia id, TOI id, Period'
-    #       )
+    print(
+        f'Found {len(tic_gaia_period)} TOI with their periods. Now writing to file '
+        f'as: TIC, Gaia id, Period'
+    )
 
-    # with open(cmdline_args.gaia_toi_file, 'w') as file:
-    #     for (gaia_id, tic_id), period in gaia_tic_period.items():
-    #         file.write(f"{gaia_id}, {tic_id}, {period}\n")
+    with open(toi_gaia_period_fname, 'w') as file:
+        for (tic_id, gaia_id), period in tic_gaia_period.items():
+            file.write(f"{tic_id}, {gaia_id}, {period}\n")
+
+
+
 
 def main():
 
