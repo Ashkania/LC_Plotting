@@ -38,11 +38,11 @@
         If so, we save the TIC id and Gaia id in a dictionary.
         (we may use this one for a large number of LCs, like > 1000)
 
-    4. Extract TOI IDs and their periods for the TICs that we found. 
-    query_toi_in_fov(tic_gaia, cmdline_args.toi_gaia_period_fname, fov_mag_range) -> None
-    Finally, it queries TOI table in exoplanet archive in the range in the FOV of the LCs
-    and check if any of those TOI have a TIC id in our list. If so, it extracts the period.
-    Also, it writes: toi_gaia_period.txt
+    4. Extract TOI IDs and their periods for the FOV of our LCs. 
+        query_toi_in_fov(tic_gaia, cmdline_args.toi_gaia_period_fname, fov_mag_range) -> None
+        Finally, it queries TOI table in exoplanet archive in the range in the FOV of the LCs
+        and check if any of those TOI have a TIC id in our list. If so, it extracts the period.
+        Also, it writes: toi_gaia_period.txt
     -------------------------------------------------
         
     Check this link for all tables that you may need:
@@ -85,6 +85,10 @@ def parse_command_line():
         help='The path containing .h5 lc files.'
     )
     parser.add_argument(
+        '--lc-catalog',
+        help='The input file containing the light curve catalog.'
+    )
+    parser.add_argument(
         '--tic-gaia-fname',
         default='tic_gaia.txt',
         help='The output file to write tic to gaia mappings.'
@@ -99,11 +103,7 @@ def parse_command_line():
         default='toi_gaia_period.txt',
         help='The output file to write toi, gaia, period mappings.'
     )
-    parser.add_argument(
-        '--lc-catalog',
-        default='lc_catalog.fits',
-        help='The input file containing the light curve catalog.'
-    )
+
     # parser.add_argument(
     #     '--tables-to-query',
     #     default=['"IV/39/tic82"', 'toi'],
@@ -113,9 +113,9 @@ def parse_command_line():
 
     return parser.parse_args()
 
-##########################################################################
-### specialized for Vizier TAP service (ORIGINAL - kept for reference) ###
-###########################################################################
+# ------------------------------------------------------------------#
+# - specialized for Vizier TAP service (ORIG-kept for reference) -- #
+# ------------------------------------------------------------------#
 
 @tenacity.retry(wait=tenacity.wait_fixed(2), stop=tenacity.stop_after_attempt(5), reraise=True)
 def tap_vizier_query(url='http://tapvizier.u-strasbg.fr/TAPVizieR/tap/',
@@ -148,10 +148,10 @@ def tap_vizier_query(url='http://tapvizier.u-strasbg.fr/TAPVizieR/tap/',
     return results
 
 
-#################################################
-##### NEW ASTROQUERY-based functions ############
-##### Query a single Gaia ID in TIC catalog #####
-#################################################
+# ------------------------------------------------------------------#
+# ------------- NEW ASTROQUERY-based functions ---------------------#
+# ---------- Query a single Gaia ID in TIC catalog -----------------#
+# ------------------------------------------------------------------#
 
 @tenacity.retry(wait=tenacity.wait_fixed(2), stop=tenacity.stop_after_attempt(5), reraise=True)
 def query_tic_by_gaia(gaia_id):
@@ -170,8 +170,9 @@ def query_tic_by_gaia(gaia_id):
     result = viz.query_constraints(catalog='IV/39/tic82', GAIA=gaia_id)
     return result[0] if result else None
 
-
-# Query TIC catalog in a spatial region (FOV)
+# ------------------------------------------------------------------#
+# ------ Query TIC catalog in a spatial region (FOV) ---------------#
+# ------------------------------------------------------------------#
 @tenacity.retry(wait=tenacity.wait_fixed(2), stop=tenacity.stop_after_attempt(5), reraise=True)
 def query_tic_in_region(fov_mag_range):
     """
@@ -226,7 +227,7 @@ def lcs_to_gaia_ids(lc_path):
 
 
 # ------------------------------------------------------------------#
-# ----------- Find the FOV of the LCs ------------------------------#
+# ----------- Find the FOV of the LCs (catalog) --------------------#
 # ------------------------------------------------------------------#
 
 def find_fov_of_lcs(lc_catalog):
@@ -254,8 +255,9 @@ def find_fov_of_lcs(lc_catalog):
 
 
 # ------------------------------------------------------------------#
-# --- For each GAIA ID, query vizier to find its TIC (not efficient sometimes) ---#
-# --- ORIGINAL TAP VERSION (kept for reference) ---#
+# --- For each GAIA ID, query vizier to find its TIC -------------- #
+# -------- (not efficient sometimes) ------------------------------ #
+# --- ORIGINAL TAP VERSION (kept for reference) ------------------- #
 # ------------------------------------------------------------------#
 
 def query_vizier_n_times_tap(gaia_ids, tic_gaia_fname):
@@ -288,7 +290,7 @@ def query_vizier_n_times_tap(gaia_ids, tic_gaia_fname):
 
 
 # ------------------------------------------------------------------#
-# --- For each GAIA ID, query vizier to find its TIC (ASTROQUERY) ---#
+# -- For each GAIA ID, query vizier to find its TIC (ASTROQUERY) -- #
 # ------------------------------------------------------------------#
 
 def query_vizier_n_times(gaia_ids, tic_gaia_fname):
@@ -318,7 +320,7 @@ def query_vizier_n_times(gaia_ids, tic_gaia_fname):
 # ------------------------------------------------------------------#
 # --- Instead of query vizier n times, query it once based on the --#
 # --- FOV of the LCs and then find the TICs from the results -------#
-# --- ORIGINAL TAP VERSION (kept for reference) ---#
+# --- ORIGINAL TAP VERSION (kept for reference) ------------------- #
 # ------------------------------------------------------------------#
 
 def query_vizier_once_tap(gaia_ids, tic_gaia_fname, fov_mag_range):
@@ -356,9 +358,9 @@ def query_vizier_once_tap(gaia_ids, tic_gaia_fname, fov_mag_range):
 
 
 # ------------------------------------------------------------------#
-# --- Instead of query vizier n times, query it once based on the --#
+# --- Instead of query vizier n times, query it once based on the - #
 # --- FOV of the LCs and then find the TICs from the results -------#
-# --- ASTROQUERY VERSION ---#
+# --- ASTROQUERY VERSION ------------------------------------------ #
 # ------------------------------------------------------------------#
 
 def query_vizier_once(gaia_ids, tic_gaia_fname, fov_mag_range):
@@ -398,7 +400,7 @@ def query_vizier_once(gaia_ids, tic_gaia_fname, fov_mag_range):
 # --- Instead of query n times, do it once based on the ------------#
 # --- FOV of the LCs to find the TOI IDs in that FOV,   ------------#
 # --- then check to see if any of them exist in our LCs ------------#
-# --- ORIGINAL TAP VERSION (kept for reference) ---#
+# --- ORIGINAL TAP VERSION (kept for reference) ------------------- #
 # ------------------------------------------------------------------#
 
 def query_toi_in_fov_tap(tic_gaia, toi_gaia_period_fname, fov_mag_range):
@@ -437,7 +439,7 @@ def query_toi_in_fov_tap(tic_gaia, toi_gaia_period_fname, fov_mag_range):
 # --- Instead of query n times, do it once based on the ------------#
 # --- FOV of the LCs to find the TOI IDs in that FOV,   ------------#
 # --- then check to see if any of them exist in our LCs ------------#
-# --- ASTROQUERY VERSION ---#
+# --- ASTROQUERY VERSION ------------------------------------------ #
 # ------------------------------------------------------------------#
 
 def query_toi_in_fov(tic_gaia, toi_gaia_period_fname, fov_mag_range):
@@ -496,7 +498,6 @@ def query_toi_in_fov(tic_gaia, toi_gaia_period_fname, fov_mag_range):
 
 
 
-
 def main():
 
     cmdline_args = parse_command_line()
@@ -520,22 +521,6 @@ def main():
         tic_gaia = query_vizier_once(gaia_ids, cmdline_args.tic_gaia_fname, fov_mag_range)
 
     query_toi_in_fov(tic_gaia, cmdline_args.toi_gaia_period_fname, fov_mag_range)
-
-
-    ####### What is the point of this? which is not working anyway!
-    
-    # query_test = tap_vizier_query(
-    # url='https://mast.stsci.edu/api/v0/tap',
-    # headers='*',
-    # table_database='tic_v8',
-    # constraints=[
-    #     f"RA BETWEEN 10 AND 12",
-    #     f"DEC BETWEEN 15 AND 18",
-    #     f"ST_TMAG < 10"
-    #     ]
-    # )
-    # df_test = query_test.to_table().to_pandas()
-    # print(df_test.columns)
 
 
 
