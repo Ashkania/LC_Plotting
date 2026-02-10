@@ -71,13 +71,14 @@ import astropy.units as u
 from astroquery.vizier import Vizier
 import pyvo
 
-from configargparse import ArgumentParser, DefaultsFormatter
+from configargparse import ArgumentParser, RawDescriptionHelpFormatter
 
 def parse_command_line():
     """Return the parsed command line arguments."""
 
     parser = ArgumentParser(
-        description=__doc__
+        description=__doc__,
+        formatter_class=RawDescriptionHelpFormatter
     )
     parser.add_argument(
         '--lc-path',
