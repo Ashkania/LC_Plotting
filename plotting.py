@@ -2,6 +2,8 @@
 
 """
     Plot the LC from its hdf5 file
+    IMPORTANT: Edit the plot based on the construction of LCs:
+        4 channels from all cameras comes together in LC.
     To do: how to select best aperture for different kinds of variability
 """
 
@@ -48,11 +50,22 @@ def parse_arguments():
     return parser.parse_args()
 
 def read_lc_from_hdf5(hdf5_file, aperture=0):
+
+    bjds = {}
+    magnitudes = {}
+
     with h5py.File(hdf5_file, 'r') as f:
+        channels = f[f'FrameInformation/ConfigurationIndex'][:]   # [0 0 0 1 1 2 2 3 3]
         bjd = f[f'SkyPosition/BJD'][:]
         mag = f[f'AperturePhotometry/Aperture{aperture:03}/MagnitudeFitting/Magnitude'][:]
-        mag[mag < -1e5] = np.nan  # Replace Nan (large negative) values with NaN for better plotting
-    return bjd, mag
+        mag[mag < -1e5] = np.nan  # Replace Nan (large negative) values with NaN
+
+        for channel in range(4):
+            bjds[channel] = bjd[channels == channel]
+            magnitudes[channel] = mag[channels == channel]
+            
+
+    return bjds, magnitudes
 
 def calculate_phase(bjd, period, epoch=None):
     """
@@ -78,7 +91,7 @@ def calculate_phase(bjd, period, epoch=None):
     phase = ((bjd - epoch) / period) % 1.0
     return phase
 
-def plot_light_curve(bjd, mag, title="Light Curve", xlabel="BJD", ylabel="Magnitude", period=None):
+def plot_light_curve(bjd, mag, channel, title="Light Curve", xlabel="BJD", ylabel="Magnitude", period=None):
     """
     Plot light curve. If period is provided, plots two cycles for continuity.
     """
@@ -87,14 +100,15 @@ def plot_light_curve(bjd, mag, title="Light Curve", xlabel="BJD", ylabel="Magnit
     plt.scatter(bjd, mag, s=10, color='green')
     
     plt.gca().invert_yaxis()  # Magnitude axis is inverted
-    plt.title(title)
+    plt.title(f'{title} - Channel: {channel}', fontdict={"fontweight":"bold", 'fontsize':16})
     plt.xlabel(xlabel, fontdict={"fontweight":"bold", 'fontsize':14})
     plt.ylabel(ylabel, fontdict={"fontweight":"bold", 'fontsize':14})
     plt.grid(True)
-    plt.savefig(f'{title}',dpi=400)
+    plt.savefig(f'{title}_Channel_{channel}',dpi=400)
     plt.show()
 
-if __name__ == "__main__":
+
+def main():
 
     args = parse_arguments()
     hdf5_file = args.hdf5_file
@@ -103,17 +117,27 @@ if __name__ == "__main__":
     period = args.period
     epoch = args.epoch
 
-    bjd, mag = read_lc_from_hdf5(hdf5_file, aperture)
+    bjds, magnitudes = read_lc_from_hdf5(hdf5_file, aperture)
+    # bjds, magnitudes = {0: array([...]), 1: array([...]), 2: array([...]), 3: array([...])}
+
+    # TODO: Plot all channels together with different colors and legends    
+    for channel in sorted(bjds.keys()):
+        bjd = bjds[channel]
+        mag = magnitudes[channel]
     
-    if period is not None:
-        # Phase fold the light curve
-        phase = calculate_phase(bjd, period, epoch)
-        plot_light_curve(phase, mag, title=title, xlabel="Phase", period=period)
-        print(f"Light curve folded with period = {period} days")
-        if epoch:
-            print(f"Reference epoch (t0) = {epoch}")
+        # If period is provided, phase fold the first channel's data
+        if period is not None:
+            phase = calculate_phase(bjd, period, epoch)
+            plot_light_curve(phase, mag, channel=channel, title=title, xlabel="Phase", period=period)
+            print(f"Light curve folded with period = {period} days")
+            if epoch:
+                print(f"Reference epoch (t0) = {epoch}")
+            else:
+                print(f"Reference epoch (t0) = {bjd[0]} (first observation)")
         else:
-            print(f"Reference epoch (t0) = {bjd[0]} (first observation)")
-    else:
-        # Plot regular light curve
-        plot_light_curve(bjd, mag, title=title)
+            # Plot regular light curve
+            plot_light_curve(bjd, mag, channel=channel, title=title)
+
+
+if __name__ == "__main__":
+    main()
