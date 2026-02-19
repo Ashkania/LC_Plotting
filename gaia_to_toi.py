@@ -8,7 +8,7 @@
     --tic-gaia-fname: The output file to write tic to gaia mappings.
         --tic-gaia-file: if we already have it, specify the file path
     --toi-gaia-period-fname: The output file to write toi, gaia, period mappings.
-    --lc-catalog: The input file containing the light curve catalog.
+    --lc-catalog: The input file names of all the GAIA catalogs that are created up to magfit.
 
     1. We have the LCs, want to extract their Gaia ids:
         lcs_to_gaia_ids(lc_path) -> gaia_ids
@@ -62,6 +62,7 @@ import os
 import os.path
 import glob
 import ast
+import logging
 import numpy
 import tenacity
 import pandas as pd
@@ -73,6 +74,12 @@ import pyvo
 
 from configargparse import ArgumentParser, RawDescriptionHelpFormatter
 
+# Configure logging for retry attempts
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
 def parse_command_line():
     """Return the parsed command line arguments."""
 
@@ -82,12 +89,12 @@ def parse_command_line():
     )
     parser.add_argument(
         '--lc-path',
-        default=None,
         help='The path containing .h5 lc files.'
     )
     parser.add_argument(
-        '--lc-catalog',
-        help='The input file containing the light curve catalog.'
+        '--lc-catalogs',
+        nargs='+',
+        help='The input file names of all the GAIA catalogs.'
     )
     parser.add_argument(
         '--tic-gaia-fname',
@@ -118,7 +125,12 @@ def parse_command_line():
 # - specialized for Vizier TAP service (ORIG-kept for reference) -- #
 # ------------------------------------------------------------------#
 
-@tenacity.retry(wait=tenacity.wait_fixed(2), stop=tenacity.stop_after_attempt(5), reraise=True)
+@tenacity.retry(
+    wait=tenacity.wait_exponential(multiplier=1, min=2, max=60),
+    stop=tenacity.stop_after_attempt(10),
+    reraise=True,
+    before_sleep=tenacity.before_sleep_log(__import__('logging').getLogger(__name__), __import__('logging').WARNING)
+)
 def tap_vizier_query(url='http://tapvizier.u-strasbg.fr/TAPVizieR/tap/',
                      headers='*',
                      table_database='"J/ApJS/258/16/tess-ebs"', 
@@ -154,7 +166,12 @@ def tap_vizier_query(url='http://tapvizier.u-strasbg.fr/TAPVizieR/tap/',
 # ---------- Query a single Gaia ID in TIC catalog -----------------#
 # ------------------------------------------------------------------#
 
-@tenacity.retry(wait=tenacity.wait_fixed(2), stop=tenacity.stop_after_attempt(5), reraise=True)
+@tenacity.retry(
+    wait=tenacity.wait_exponential(multiplier=1, min=2, max=60),
+    stop=tenacity.stop_after_attempt(10),
+    reraise=True,
+    before_sleep=tenacity.before_sleep_log(__import__('logging').getLogger(__name__), __import__('logging').WARNING)
+)
 def query_tic_by_gaia(gaia_id):
     """
     Query TIC 8.2 catalog for a specific Gaia ID.
@@ -165,7 +182,7 @@ def query_tic_by_gaia(gaia_id):
     Returns:
         - result: Query result table or empty table if no match found
     """
-    viz = Vizier(columns=['TIC', 'GAIA', 'Vmag', 'RAJ2000', 'DEJ2000'])
+    viz = Vizier(columns=['TIC', 'GAIA', 'Vmag', 'RAJ2000', 'DEJ2000'], timeout=300)
     viz.ROW_LIMIT = 1  # We expect at most one match per Gaia ID
     
     result = viz.query_constraints(catalog='IV/39/tic82', GAIA=gaia_id)
@@ -174,7 +191,12 @@ def query_tic_by_gaia(gaia_id):
 # ------------------------------------------------------------------#
 # ------ Query TIC catalog in a spatial region (FOV) ---------------#
 # ------------------------------------------------------------------#
-@tenacity.retry(wait=tenacity.wait_fixed(2), stop=tenacity.stop_after_attempt(5), reraise=True)
+@tenacity.retry(
+    wait=tenacity.wait_exponential(multiplier=1, min=2, max=60),
+    stop=tenacity.stop_after_attempt(10),
+    reraise=True,
+    before_sleep=tenacity.before_sleep_log(__import__('logging').getLogger(__name__), __import__('logging').WARNING)
+)
 def query_tic_in_region(fov_mag_range):
     """
     Query TIC 8.2 catalog in a spatial region defined by RA, Dec, and magnitude range.
@@ -185,7 +207,7 @@ def query_tic_in_region(fov_mag_range):
     Returns:
         - result: Query result table
     """
-    viz = Vizier(columns=['TIC', 'GAIA', 'Vmag', 'RAJ2000', 'DEJ2000'])
+    viz = Vizier(columns=['TIC', 'GAIA', 'Vmag', 'RAJ2000', 'DEJ2000'], timeout=300)
     viz.ROW_LIMIT = -1  # No limit for region queries
     
     # Define the center and radius of the search region (approximate bounding box as circular region)
@@ -231,28 +253,40 @@ def lcs_to_gaia_ids(lc_path):
 # ----------- Find the FOV of the LCs (catalog) --------------------#
 # ------------------------------------------------------------------#
 
-def find_fov_of_lcs(lc_catalog):
+def find_fov_of_lcs(lc_catalogs):
 
-    with fits.open(lc_catalog) as hdul:
-        lc_data = hdul[1].data
+    ra_min_all, ra_max_all = 1e10, -1e10
+    dec_min_all, dec_max_all = 1e10, -1e10
+    mag_min_all, mag_max_all = 1e10, -1e10
 
-        ra_min, ra_max = lc_data['ra'].min(), lc_data['ra'].max()
-        dec_min, dec_max = lc_data['dec'].min(), lc_data['dec'].max()
-        mag_min, mag_max = lc_data['phot_g_mean_mag'].min(), lc_data['phot_g_mean_mag'].max()
+    for lc_catalog in lc_catalogs:
+        with fits.open(lc_catalog) as hdul:
+            lc_data = hdul[1].data
 
-        print(f'Ranges in lc catalog:::\n'
-              f'ra: ({ra_min:.2f}, {ra_max:.2f})\n'
-              f'dec: ({dec_min:.2f}, {dec_max:.2f})\n'
-              f'mag: ({mag_min:.2f}, {mag_max:.2f})\n'
-        )
+            ra_min, ra_max = lc_data['ra'].min(), lc_data['ra'].max()
+            ra_min_all = min(ra_min_all, ra_min)
+            ra_max_all = max(ra_max_all, ra_max)
 
-    return {'ra_min': ra_min,
-            'ra_max': ra_max,
-            'dec_min': dec_min,
-            'dec_max': dec_max,
-            'mag_min': mag_min,
-            'mag_max': mag_max
-            }
+            dec_min, dec_max = lc_data['dec'].min(), lc_data['dec'].max()
+            dec_min_all = min(dec_min_all, dec_min)
+            dec_max_all = max(dec_max_all, dec_max)
+        
+            mag_min, mag_max = lc_data['phot_g_mean_mag'].min(), lc_data['phot_g_mean_mag'].max()
+            mag_min_all = min(mag_min_all, mag_min)
+            mag_max_all = max(mag_max_all, mag_max)
+
+    print(f'Ranges in lc catalogs:::\n'
+            f'ra: ({ra_min_all:.2f}, {ra_max_all:.2f})\n'
+            f'dec: ({dec_min_all:.2f}, {dec_max_all:.2f})\n'
+            f'mag: ({mag_min_all:.2f}, {mag_max_all:.2f})\n'
+    )
+
+    return {'ra_min': ra_min_all,
+            'ra_max': ra_max_all,
+            'dec_min': dec_min_all,
+            'dec_max': dec_max_all,
+            'mag_min': mag_min_all,
+            'mag_max': mag_max_all}
 
 
 # ------------------------------------------------------------------#
@@ -502,12 +536,12 @@ def query_toi_in_fov(tic_gaia, toi_gaia_period_fname, fov_mag_range):
 def main():
 
     cmdline_args = parse_command_line()
-    if not (cmdline_args.lc_path and cmdline_args.lc_catalog):
+    if not (cmdline_args.lc_path and cmdline_args.lc_catalogs):
         print("Error: --lc-path and --lc-catalog are required")
         exit(1)
 
     gaia_ids = lcs_to_gaia_ids(cmdline_args.lc_path)
-    fov_mag_range = find_fov_of_lcs(cmdline_args.lc_catalog)
+    fov_mag_range = find_fov_of_lcs(cmdline_args.lc_catalogs)
 
     if cmdline_args.tic_gaia_file:
         tic_gaia = {}
