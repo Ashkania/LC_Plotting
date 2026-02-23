@@ -186,7 +186,7 @@ def query_tic_by_gaia(gaia_id):
     viz.ROW_LIMIT = 1  # We expect at most one match per Gaia ID
     
     result = viz.query_constraints(catalog='IV/39/tic82', GAIA=gaia_id)
-    return result[0] if result else None
+    return result[0] if len(result) > 0 else None
 
 # ------------------------------------------------------------------#
 # ------ Query TIC catalog in a spatial region (FOV) ---------------#
@@ -229,7 +229,8 @@ def query_tic_in_region(fov_mag_range):
         radius=radius * u.deg,
         Vmag=f"< {fov_mag_range['mag_max']}"
     )
-    return result[0] if result else None
+    # Use len() instead of truthiness to avoid ambiguous Quantity comparison error
+    return result[0] if len(result) > 0 else None
 
 
 # ------------------------------------------------------------------#
@@ -500,7 +501,7 @@ def query_toi_in_fov(tic_gaia, toi_gaia_period_fname, fov_mag_range):
     # Query TOI catalog (available through Vizier)
     try:
         result = viz.query_region(coord, radius=radius * u.deg, catalog='IV/38/toi')
-        if result:
+        if len(result) > 0:
             query_toi_result = result[0]
         else:
             query_toi_result = None
