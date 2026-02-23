@@ -207,8 +207,12 @@ def query_tic_in_region(fov_mag_range):
     Returns:
         - result: Query result table
     """
-    viz = Vizier(columns=['TIC', 'GAIA', 'Vmag', 'RAJ2000', 'DEJ2000'], timeout=300)
-    viz.ROW_LIMIT = -1  # No limit for region queries
+    viz = Vizier(
+        columns=['TIC', 'GAIA', 'Vmag', 'RAJ2000', 'DEJ2000'],
+        column_filters={"Vmag":f"< {fov_mag_range['mag_max']}"},
+        # timeout=300
+    )
+    # viz.ROW_LIMIT = -1  # No limit for region queries
     
     # Define the center and radius of the search region (approximate bounding box as circular region)
     ra_center = (fov_mag_range['ra_min'] + fov_mag_range['ra_max']) / 2
@@ -223,11 +227,10 @@ def query_tic_in_region(fov_mag_range):
     
     # Vizier's query_region uses a circular region, which may include extra objects
     # We'll filter by magnitude and do bounds checking in the calling function
-    result = viz.query_constraints(
-        catalog='IV/39/tic82',
-        region=coord,
+    result = viz.query_region(
+        coord,
         radius=radius * u.deg,
-        Vmag=f"< {fov_mag_range['mag_max']}"
+        catalog='IV/39/tic82'
     )
     # Use len() instead of truthiness to avoid ambiguous Quantity comparison error
     return result[0] if len(result) > 0 else None
