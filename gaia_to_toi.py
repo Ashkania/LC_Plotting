@@ -223,7 +223,12 @@ def query_tic_in_region(fov_mag_range):
     
     # Vizier's query_region uses a circular region, which may include extra objects
     # We'll filter by magnitude and do bounds checking in the calling function
-    result = viz.query_region(coord, radius=radius * u.deg, catalog='IV/39/tic82')
+    result = viz.query_constraints(
+        catalog='IV/39/tic82',
+        region=coord,
+        radius=radius * u.deg,
+        Vmag=f"< {fov_mag_range['mag_max']}"
+    )
     return result[0] if result else None
 
 
