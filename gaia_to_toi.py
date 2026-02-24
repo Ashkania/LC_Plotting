@@ -408,7 +408,7 @@ def query_vizier_n_times_tap(gaia_ids, tic_gaia_fname):
 # -- For each GAIA ID, query vizier to find its TIC (ASTROQUERY) -- #
 # ------------------------------------------------------------------#
 
-def query_vizier_n_times(gaia_ids, tic_gaia_fname):
+def query_vizier_n_times(gaia_ids, df_lcs, tic_gaia_fname):
 
     tic_gaia = {}
 
@@ -421,7 +421,11 @@ def query_vizier_n_times(gaia_ids, tic_gaia_fname):
         
         if result is not None and len(result) > 0:
             tic_id = result['TIC'][0]
+            # df_lcs['gaia_id'] 
             tic_gaia[tic_id] = gaia_id
+    df_tic_gaia = pd.DataFrame(list(tic_gaia.items()), columns=['tic', 'gaia_id'])
+    df_lcs = df_lcs.merge(df_tic_gaia, on='gaia_id', how='outer')
+
 
     print(f'Found {len(tic_gaia)} unique TIC ids. Now querying TOI in FOV of LCs in the LC catalog\n')
 
@@ -429,7 +433,7 @@ def query_vizier_n_times(gaia_ids, tic_gaia_fname):
         for tic_id, gaia_id in tic_gaia.items():
             file.write(f"{tic_id}, {gaia_id}\n")
     
-    return tic_gaia
+    return tic_gaia, df_lcs
 
 
 # ------------------------------------------------------------------#
@@ -641,11 +645,11 @@ def main():
                 tic_id, gaia_id = map(int, line.strip().split(', '))
                 tic_gaia[tic_id] = gaia_id
 
-    elif len(gaia_ids) < 1000:  ### should find the efficient threshold
-        tic_gaia = query_vizier_n_times(gaia_ids, cmdline_args.tic_gaia_fname)
+    elif len(gaia_ids) < 100000:  ### should find the efficient threshold
+        tic_gaia, df_lcs = query_vizier_n_times(gaia_ids, df_lcs, cmdline_args.tic_gaia_fname)
     else:
         tic_gaia = query_vizier_once(gaia_ids, cmdline_args.tic_gaia_fname, fov_mag_range)
-
+    df_lcs.to_csv('df_lcs_with_tic_gaia.csv', index=False)
     query_toi_in_fov(tic_gaia, cmdline_args.toi_gaia_period_fname, fov_mag_range)
 
 
