@@ -61,17 +61,16 @@
 import os
 import os.path
 import glob
-import ast
 import logging
-import numpy
 import tenacity
 import pandas as pd
+import pyvo
+import astropy.units as u
+from astropy.table import Table, vstack
 from astropy.io import fits
 from astropy.coordinates import SkyCoord
-import astropy.units as u
 from astroquery.vizier import Vizier
-import pyvo
-
+from astroquery.gaia import Gaia
 from configargparse import ArgumentParser, RawDescriptionHelpFormatter
 
 # Configure logging for retry attempts
@@ -110,6 +109,12 @@ def parse_command_line():
         '--toi-gaia-period-fname',
         default='toi_gaia_period.txt',
         help='The output file to write toi, gaia, period mappings.'
+    )
+    parser.add_argument(
+        '--skip-gaia-variables',
+        default=False,
+        action='store_true',
+        help='Skip querying Gaia variable classifications.'
     )
 
     # parser.add_argument(
@@ -210,9 +215,12 @@ def query_tic_in_region(fov_mag_range):
     viz = Vizier(
         columns=['TIC', 'GAIA', 'Vmag', 'RAJ2000', 'DEJ2000'],
         column_filters={"Vmag":f"< {fov_mag_range['mag_max']}"},
+        # column_filters={"Vmag":"< 8.0"},
         # timeout=300
     )
-    # viz.ROW_LIMIT = -1  # No limit for region queries
+    print(f'viz: {viz}')
+    viz.ROW_LIMIT = -1  # No limit for region queries
+    Vizier.SERVER = 'https://vizier.cds.unistra.fr'
     
     # Define the center and radius of the search region (approximate bounding box as circular region)
     ra_center = (fov_mag_range['ra_min'] + fov_mag_range['ra_max']) / 2
@@ -227,11 +235,15 @@ def query_tic_in_region(fov_mag_range):
     
     # Vizier's query_region uses a circular region, which may include extra objects
     # We'll filter by magnitude and do bounds checking in the calling function
+    print(f"Querying TIC catalog in region centered at (RA: {ra_center:.2f}, Dec: {dec_center:.2f}) with radius {radius:.2f} deg and Vmag < {fov_mag_range['mag_max']:.2f}")
     result = viz.query_region(
         coord,
         radius=radius * u.deg,
         catalog='IV/39/tic82'
     )
+    with open('query_result.txt', 'w') as file:
+        for row in result[0]:
+            file.write(f"{row['GAIA']}\n")
     # Use len() instead of truthiness to avoid ambiguous Quantity comparison error
     return result[0] if len(result) > 0 else None
 
@@ -252,11 +264,70 @@ def lcs_to_gaia_ids(lc_path):
         for lc in lcs
     }
     # gaia_ids = {1316714794020532096, ...}
-
+    with open('gaia_ids.txt', 'w') as file:
+        for gaia_id in gaia_ids:
+            file.write(f"{gaia_id}\n")
     print(f'Found {len(gaia_ids)} unique gaia ids. Now querying TIC\n')
 
     return gaia_ids
 
+
+# ------------------------------------------------------------------#
+# --------- Extract all GAIA variables from LCs --------------------#
+# ------------------------------------------------------------------#
+
+def gaia_ids_to_variables(gaia_ids, batch_size=100):
+
+    query_varialbles = """
+    SELECT v.source_id,
+           v.best_class_name,
+           v.classification_score
+    FROM gaiadr3.vari_classifier_result AS v
+    JOIN user_table AS u
+    ON v.source_id = u.source_id
+    """
+
+    gaia_ids_list = sorted(gaia_ids)
+    results_batches = []
+
+    for start in range(0, len(gaia_ids_list), batch_size):
+        batch = gaia_ids_list[start:start + batch_size]
+        df_gaia = pd.DataFrame({'source_id': batch}, dtype='int64')
+        gaia_table = Table.from_pandas(df_gaia)
+        upload_table_name = f"user_table_{start}_{len(batch)}"
+
+        try:
+            job = Gaia.launch_job_async(
+                query=query_varialbles,
+                upload_resource=gaia_table,
+                upload_table_name=upload_table_name
+            )
+            batch_results = job.get_results()
+        except Exception as exc:
+            logging.warning(
+                'Gaia variables query failed for batch %d-%d: %s',
+                start,
+                start + len(batch) - 1,
+                exc
+            )
+            continue
+
+        if batch_results is not None and len(batch_results) > 0:
+            results_batches.append(batch_results)
+
+    if not results_batches:
+        print('No Gaia variable results returned.')
+        return None
+
+    results = vstack(results_batches)
+
+    with open('gaia_variables.txt', 'w') as file:
+        for row in results:
+            file.write(
+                f"{row['source_id']}, {row['best_class_name']}, {row['classification_score']}\n"
+            )
+
+    return None
 
 # ------------------------------------------------------------------#
 # ----------- Find the FOV of the LCs (catalog) --------------------#
@@ -421,11 +492,14 @@ def query_vizier_once(gaia_ids, tic_gaia_fname, fov_mag_range):
         f' Now check this result for each LC to find matches.\n')
 
     for row in result:
+        # print(f'row: {row}')  # Debug print to check the structure of the row
         gaia_val = row['GAIA']
+        # print(f'gaia_val: {gaia_val}')  # Debug print to check the GAIA value
         # Handle cases where GAIA might be None or masked
         if gaia_val is not None and gaia_val != '':
             try:
                 gaia_id = int(gaia_val) if isinstance(gaia_val, str) else gaia_val
+                # print(f'gaia_id: {gaia_id}')  # Debug print to check the parsed Gaia ID
                 if gaia_id in gaia_ids:
                     tic_gaia[int(row['TIC'])] = gaia_id
             except (ValueError, TypeError):
@@ -550,6 +624,14 @@ def main():
         exit(1)
 
     gaia_ids = lcs_to_gaia_ids(cmdline_args.lc_path)
+    df_lcs = pd.DataFrame({'gaia_id': list(gaia_ids)})
+    # print(f"df_lcs.head():\n{df_lcs.head()}")
+    if cmdline_args.skip_gaia_variables:
+        print('Skipping Gaia variable query.')
+    else:
+        _ = gaia_ids_to_variables(gaia_ids)
+    # print(f'ebb: {len(ebb)}, rr: {len(rr)}')
+
     fov_mag_range = find_fov_of_lcs(cmdline_args.lc_catalogs)
 
     if cmdline_args.tic_gaia_file:
