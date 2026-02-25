@@ -395,7 +395,7 @@ def query_vizier_n_times_tap(gaia_ids, tic_gaia_fname):
             tic_id = query_gaia_to_tic['TIC'].data[0]
             tic_gaia[tic_id] = gaia_id
 
-    print(f'Found {len(tic_gaia)} unique TIC ids. Now querying TOI in FOV of LCs in the LC catalog\n')
+    print(f'Found {len(tic_gaia)} unique TIC ids.\n')
 
     with open(tic_gaia_fname, 'w') as file:
         for tic_id, gaia_id in tic_gaia.items():
@@ -410,7 +410,7 @@ def query_vizier_n_times_tap(gaia_ids, tic_gaia_fname):
 
 def query_vizier_n_times(gaia_ids, df_lcs, tic_gaia_fname):
 
-    tic_gaia = {}
+    gaia_tic = {}
 
     n = 0
     for gaia_id in gaia_ids:
@@ -422,18 +422,18 @@ def query_vizier_n_times(gaia_ids, df_lcs, tic_gaia_fname):
         if result is not None and len(result) > 0:
             tic_id = result['TIC'][0]
             # df_lcs['gaia_id'] 
-            tic_gaia[tic_id] = gaia_id
-    df_tic_gaia = pd.DataFrame(list(tic_gaia.items()), columns=['tic', 'gaia_id'])
-    df_lcs = df_lcs.merge(df_tic_gaia, on='gaia_id', how='outer')
+            gaia_tic[gaia_id] = tic_id
+    df_gaia_tic = pd.DataFrame(list(gaia_tic.items()), columns=['gaia_id', 'tic'])
+    df_lcs = df_lcs.merge(df_gaia_tic, on='gaia_id', how='outer')
 
 
-    print(f'Found {len(tic_gaia)} unique TIC ids. Now querying TOI in FOV of LCs in the LC catalog\n')
+    print(f'Found {len(gaia_tic)} unique TIC ids.\n')
 
     with open(tic_gaia_fname, 'w') as file:
-        for tic_id, gaia_id in tic_gaia.items():
+        for gaia_id, tic_id in gaia_tic.items():
             file.write(f"{tic_id}, {gaia_id}\n")
     
-    return tic_gaia, df_lcs
+    return gaia_tic, df_lcs
 
 
 # ------------------------------------------------------------------#
@@ -618,6 +618,68 @@ def query_toi_in_fov(tic_gaia, toi_gaia_period_fname, fov_mag_range):
         for (tic_id, gaia_id), period in tic_gaia_period.items():
             file.write(f"{tic_id}, {gaia_id}, {period}\n")
 
+# ------------------------------------------------------------------#
+# --- Query for eclipsing binaries in the TIC list ----------------#
+# ------------------------------------------------------------------#
+
+def query_eclipsing_binaries_10k(gaia_tic, eb_fname):
+    """
+    Downloaded mrt table from:
+    https://iopscience.iop.org/article/10.3847/1538-4365/ade2d8#apjsade2d8t3
+    """
+    colspecs = [
+        (0, 10),    # TIC
+        (11, 23),   # RAdeg
+        (24, 36),   # DEdeg
+        (37, 43),   # Tmag
+        (44, 53),   # Per
+        (54, 63),   # T0-pri
+        (64, 67),   # Depth-pri
+        (68, 72),   # Dur-pri
+        (73, 82),   # T0-sec
+        (83, 87),   # Phase
+        (88, 94),   # Depth-sec
+        (95, 99),   # Dur-sec
+        (100,102),  # Sectors
+        (103,108),  # RUWE
+        (109,117),  # AEN
+        (118,131),  # AENS
+        (132,137),  # Teff
+        (138,250)   # Com
+    ]
+    columns = [
+        "TIC","RAdeg","DEdeg","Tmag","Per","T0_pri","Depth_pri",
+        "Dur_pri","T0_sec","Phase","Depth_sec","Dur_sec",
+        "Sectors","RUWE","AEN","AENS","Teff","Com"
+    ]
+    df_eb = pd.read_fwf(
+        eb_fname,
+        colspecs=colspecs,
+        names=columns,
+        skiprows=range(0, 38)
+    )
+    sub_df_eb = df_eb[
+        (df_eb.RAdeg<105)
+        &(df_eb.RAdeg>65)
+        &(df_eb.DEdeg<20)
+        &(df_eb.DEdeg>-3)
+        &(df_eb.Tmag<12.5)
+    ]
+    for tic in sub_df_eb.TIC:
+        if tic in gaia_tic.values():
+            print(f"Found EB in TIC list: {sub_df_eb[sub_df_eb.TIC==tic]}")
+
+
+def query_eclipsing_binaries_villa(gaia_tic, eb_fname):
+    """
+    Downloaded from:
+    https://tessebs.villanova.edu/
+    """
+    df_eb = pd.read_csv(eb_fname)
+
+    for tic in df_eb.TIC:
+        if tic in gaia_tic.values():
+            print(f"Found EB in TIC list: {df_eb[df_eb.TIC==tic]}")
 
 
 def main():
@@ -639,18 +701,25 @@ def main():
     fov_mag_range = find_fov_of_lcs(cmdline_args.lc_catalogs)
 
     if cmdline_args.tic_gaia_file:
-        tic_gaia = {}
+        gaia_tic = {}
         with open(cmdline_args.tic_gaia_file, 'r') as file:
             for line in file:
                 tic_id, gaia_id = map(int, line.strip().split(', '))
-                tic_gaia[tic_id] = gaia_id
+                gaia_tic[gaia_id] = tic_id
+        # add df_lcs here too
 
     elif len(gaia_ids) < 100000:  ### should find the efficient threshold
-        tic_gaia, df_lcs = query_vizier_n_times(gaia_ids, df_lcs, cmdline_args.tic_gaia_fname)
+        gaia_tic, df_lcs = query_vizier_n_times(gaia_ids, df_lcs, cmdline_args.tic_gaia_fname)
     else:
-        tic_gaia = query_vizier_once(gaia_ids, cmdline_args.tic_gaia_fname, fov_mag_range)
+        gaia_tic = query_vizier_once(gaia_ids, cmdline_args.tic_gaia_fname, fov_mag_range)
+        # add df_lcs here too
+    
+    if gaia_tic:
+        query_eclipsing_binaries_10k(gaia_tic, eb_fname='apjsade2d8t3_mrt.txt')
+        query_eclipsing_binaries_villa(gaia_tic, eb_fname='villanova.csv')
+    
     df_lcs.to_csv('df_lcs_with_tic_gaia.csv', index=False)
-    query_toi_in_fov(tic_gaia, cmdline_args.toi_gaia_period_fname, fov_mag_range)
+    query_toi_in_fov(gaia_tic, cmdline_args.toi_gaia_period_fname, fov_mag_range)
 
 
 
