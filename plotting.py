@@ -100,7 +100,7 @@ def read_lc_from_hdf5(hdf5_file, aperture=4, fold_by='photref'):
                 for mag_type, mag_array in zip(['epd', 'magfit'], [mag_epd, mag_magfit]):
                     magnitudes[f'{mag_type}_{chn}'] = (
                         mag_array[channels == chn] - np.nanmedian(mag_array[channels == chn])
-                        )  # Detrend by subtracting median
+                        )  # Detrend by subtracting median >>> should be fixed.
 
         elif fold_by == 'photref':
             for phref in np.unique(photrefs):
@@ -134,24 +134,28 @@ def calculate_phase(bjd, period, epoch):
     phase = ((bjd - epoch) / period) % 1.0
     return phase
 
-def plot_light_curve(bjd, mag_epd, mag_magfit, fold_by, object_name, xlabel, period=None):
+def plot_light_curve(bjd, mag_epd, mag_magfit,
+                     fold_by, plot_type,
+                     object_name, chn_or_phref,
+                     xlabel, period=None
+                    ):
     """
     Plot light curve.
     """
     # plt.figure(figsize=(10, 5))
     plt.scatter(bjd, mag_epd, s=10, color='red', alpha=0.5, label='EPD')
-    plt.scatter(bjd, mag_magfit, s=10, color='blue', alpha=0.5, label='MagFit')
+    # plt.scatter(bjd, mag_magfit, s=10, color='blue', alpha=0.5, label='MagFit')
     
     plt.gca().invert_yaxis()  # Magnitude axis is inverted
     plt.xlabel(xlabel, fontdict={"fontweight":"bold", 'fontsize':14})
     plt.ylabel("Magnitude", fontdict={"fontweight":"bold", 'fontsize':14})
+    plt.ylim(1.5, -0.6)
     plt.grid(True)
-    plt.legend()
-    plt.savefig(f'{object_name}_FoldBy_{fold_by}',dpi=400)
-    # if plot one by one: 
-        # plt.ylim(1.1, -0.6)
-        # plt.title(f'{object_name} - Sector/Chn: {fold_by}', fontdict={"fontweight":"bold", 'fontsize':16})
-        # plt.show()
+    # plt.legend()
+    plt.savefig(f'{object_name}_Chn_or_photref_{chn_or_phref}',dpi=400)
+    if plot_type == 'individual':
+        plt.title(f'{object_name} - {fold_by}: {chn_or_phref}', fontdict={"fontweight":"bold", 'fontsize':16})
+        plt.show()
 
 def main():
 
@@ -166,16 +170,17 @@ def main():
 
     times, magnitudes = read_lc_from_hdf5(hdf5_file, aperture, fold_by)
 
-    for channel in sorted(times.keys()):
-        x_values = times[channel]
-        mag_epd = magnitudes[f'epd_{channel}']
-        mag_magfit = magnitudes[f'magfit_{channel}']
+    for chn_or_phref in sorted(times.keys()):
+        x_values = times[chn_or_phref]
+        mag_epd = magnitudes[f'epd_{chn_or_phref}']
+        mag_magfit = magnitudes[f'magfit_{chn_or_phref}']
     
         if period:
             phase = calculate_phase(x_values, period, epoch)
             plot_light_curve(
                 phase, mag_epd, mag_magfit,
-                fold_by, object_name,
+                fold_by, plot_type,
+                object_name, chn_or_phref,
                 xlabel="Phase", period=period
                 )
         else:
@@ -183,7 +188,8 @@ def main():
             bjd = x_values - 2450000
             plot_light_curve(
                 bjd, mag_epd, mag_magfit,
-                fold_by, object_name,
+                fold_by, plot_type,
+                object_name, chn_or_phref,
                 xlabel="BJD - 2450000"
                 )
     if plot_type == 'combined':
@@ -191,7 +197,7 @@ def main():
             f'{object_name} - folded by: {fold_by}',
             fontdict={"fontweight":"bold", 'fontsize':16}
             )
-        plt.ylim(1.5, -0.6)
+        # plt.ylim(1.5, -0.6)
         plt.show()
 
 
