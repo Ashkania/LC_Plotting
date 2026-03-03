@@ -10,6 +10,7 @@
 
 import h5py
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from argparse import ArgumentParser
 
@@ -54,13 +55,19 @@ def parse_arguments():
         default='combined',
         help="Plot all channels/photrefs in one figure"
     )
+    parser.add_argument(
+        "--binning",
+        type=tuple,
+        default=None,
+        help="Binning method and size (time/phase, bin_size) for better visualization"
+    )
 
     
     return parser.parse_args()
 
 def read_lc_from_hdf5(hdf5_file, aperture=4, fold_by='photref'):
     """
-    Read light curve data from HDF5 file and organize it for plotting.
+    Read light curve data from HDF5 file and organize it by channel or photref.
      Parameters:
     -----------
     hdf5_file : str
@@ -71,12 +78,10 @@ def read_lc_from_hdf5(hdf5_file, aperture=4, fold_by='photref'):
         Whether to fold by 'channel' or 'photref' (default: 'photref')
     Returns:
     --------
-    times : dict
-        Dictionary of time arrays keyed by channel or photref
-        ex: times = {0: array([...]), 1: array([...]), ...}
-    magnitudes : dict
-        Dictionary of magnitude arrays keyed by 'epd_channel', 'magfit_channel', etc.
-        ex: magnitudes = {'epd_0': array([...]), 'magfit_0': array([...]), ...}
+    data : dict
+        Dictionary of DataFrames keyed by channel or photref
+        ex: data = {0: DataFrame, 1: DataFrame, ...}
+        Each DataFrame has columns: 'bjd', 'mag_epd', 'mag_magfit'
     """
 
     with h5py.File(hdf5_file, 'r') as f:
@@ -91,26 +96,31 @@ def read_lc_from_hdf5(hdf5_file, aperture=4, fold_by='photref'):
         for mag_array in [mag_epd, mag_magfit]:
             mag_array[mag_array < -1e5] = np.nan  # Replace NaN (large negative) values with NaN
         
-        times = {}
-        magnitudes = {}
+        data = {}
 
         if fold_by == 'channel':
             for chn in np.unique(channels):
-                times[chn] = bjds[channels == chn]
-                for mag_type, mag_array in zip(['epd', 'magfit'], [mag_epd, mag_magfit]):
-                    magnitudes[f'{mag_type}_{chn}'] = (
-                        mag_array[channels == chn] - np.nanmedian(mag_array[channels == chn])
-                        )  # Detrend by subtracting median >>> should be fixed.
+                mask = channels == chn
+                med_epd = np.nanmedian(mag_epd[mask])
+                med_magfit = np.nanmedian(mag_magfit[mask])
+                data[chn] = pd.DataFrame({
+                    'bjd': bjds[mask],
+                    'mag_epd': mag_epd[mask] - med_epd,
+                    'mag_magfit': mag_magfit[mask] - med_magfit
+                })
 
         elif fold_by == 'photref':
             for phref in np.unique(photrefs):
-                times[phref] = bjds[photrefs == phref]
-                for mag_type, mag_array in zip(['epd', 'magfit'], [mag_epd, mag_magfit]):
-                    magnitudes[f'{mag_type}_{phref}'] = (
-                        mag_array[photrefs == phref] - np.nanmedian(mag_array[photrefs == phref])
-                        )
+                mask = photrefs == phref
+                med_epd = np.nanmedian(mag_epd[mask])
+                med_magfit = np.nanmedian(mag_magfit[mask])
+                data[phref] = pd.DataFrame({
+                    'bjd': bjds[mask],
+                    'mag_epd': mag_epd[mask] - med_epd,
+                    'mag_magfit': mag_magfit[mask] - med_magfit
+                })
 
-    return times, magnitudes
+    return data
 
 def calculate_phase(bjd, period, epoch):
     """
@@ -168,12 +178,13 @@ def main():
     fold_by = args.fold_by
     plot_type = args.plot_type
 
-    times, magnitudes = read_lc_from_hdf5(hdf5_file, aperture, fold_by)
+    data = read_lc_from_hdf5(hdf5_file, aperture, fold_by)
 
-    for chn_or_phref in sorted(times.keys()):
-        x_values = times[chn_or_phref]
-        mag_epd = magnitudes[f'epd_{chn_or_phref}']
-        mag_magfit = magnitudes[f'magfit_{chn_or_phref}']
+    for chn_or_phref in sorted(data.keys()):
+        df = data[chn_or_phref]
+        x_values = df['bjd'].values
+        mag_epd = df['mag_epd'].values
+        mag_magfit = df['mag_magfit'].values
     
         if period:
             phase = calculate_phase(x_values, period, epoch)
