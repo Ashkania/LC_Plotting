@@ -72,6 +72,7 @@ from astropy.coordinates import SkyCoord
 from astroquery.vizier import Vizier
 from astroquery.gaia import Gaia
 from configargparse import ArgumentParser, RawDescriptionHelpFormatter
+from astroquery.mast import Catalogs
 
 # Configure logging for retry attempts
 logging.basicConfig(
@@ -94,6 +95,11 @@ def parse_command_line():
         '--lc-catalogs',
         nargs='+',
         help='The input file names of all the GAIA catalogs.'
+    )
+    parser.add_argument(
+        '--gaia-ids-file',
+        default=False,
+        help='If we already have the Gaia IDs extracted from LCs, specify the file path.'
     )
     parser.add_argument(
         '--tic-gaia-fname',
@@ -622,7 +628,7 @@ def query_toi_in_fov(tic_gaia, toi_gaia_period_fname, fov_mag_range):
 # --- Query for eclipsing binaries in the TIC list ----------------#
 # ------------------------------------------------------------------#
 
-def query_eclipsing_binaries_10k(gaia_tic, eb_fname):
+def query_eclipsing_binaries_10k(gaia_ids, fov_mag_range, eb_fname):
     """
     Downloaded mrt table from:
     https://iopscience.iop.org/article/10.3847/1538-4365/ade2d8#apjsade2d8t3
@@ -659,39 +665,73 @@ def query_eclipsing_binaries_10k(gaia_tic, eb_fname):
         skiprows=range(0, 38)
     )
     sub_df_eb = df_eb[
-        (df_eb.RAdeg<105)
-        &(df_eb.RAdeg>65)
-        &(df_eb.DEdeg<20)
-        &(df_eb.DEdeg>-3)
-        &(df_eb.Tmag<12.5)
+        (df_eb.RAdeg<fov_mag_range['ra_max'])
+        &(df_eb.RAdeg>fov_mag_range['ra_min'])
+        &(df_eb.DEdeg<fov_mag_range['dec_max'])
+        &(df_eb.DEdeg>fov_mag_range['dec_min'])
+        &(df_eb.Tmag<fov_mag_range['mag_max'] + 1.0)
     ]
-    for tic in sub_df_eb.TIC:
-        if tic in gaia_tic.values():
-            print(f"Found EB in TIC list: {sub_df_eb[sub_df_eb.TIC==tic]}")
+
+    eb_gaia_ids = Catalogs.query_criteria(
+        catalog="Tic",
+        ID=sub_df_eb.TIC
+    )["GAIA"]
+    print(f'Found {len(eb_gaia_ids)} EB Gaia IDs.')
+    # print(eb_gaia_ids)
+
+    for eb_gaia_id in eb_gaia_ids:
+        if eb_gaia_id in gaia_ids:
+            print(f"Found EB in TIC list: {eb_gaia_id}")
 
 
-def query_eclipsing_binaries_villa(gaia_tic, eb_fname):
+def query_eclipsing_binaries_villa(gaia_ids, eb_fname):
     """
     Downloaded from:
     https://tessebs.villanova.edu/
+    with constraints:
+    RA: 76 to 105
+    Dec: -3 to 20
+    Tmag: < 12.5
     """
-    df_eb = pd.read_csv(eb_fname)
+    
+    df_eb = pd.read_csv(eb_fname, index_col=False)
 
-    for tic in df_eb.TIC:
-        if tic in gaia_tic.values():
-            print(f"Found EB in TIC list: {df_eb[df_eb.TIC==tic]}")
+    eb_query = Catalogs.query_criteria(
+        catalog="Tic",
+        ID=df_eb.TIC
+    ).to_pandas()
+
+    # print(f'Found {len(eb_query["GAIA"])} EB Gaia IDs.')
+
+    print('List of EB in our FOV:')
+    for eb_gaia_id in eb_query['GAIA']:
+        if eb_gaia_id in gaia_ids:
+            tic = eb_query.loc[eb_query['GAIA'] == eb_gaia_id, 'ID'].values[0]
+            period = df_eb.loc[df_eb['TIC'] == int(tic), 'Per'].values[0]
+            print(f'Gaia: {eb_gaia_id}, TIC: {tic}, Period: {period}')
 
 
 def main():
 
     cmdline_args = parse_command_line()
-    if not (cmdline_args.lc_path and cmdline_args.lc_catalogs):
-        print("Error: --lc-path and --lc-catalog are required")
+    if not (cmdline_args.lc_path or cmdline_args.gaia_ids_file) and not cmdline_args.lc_catalogs:
+        print("Error: --lc-path or --gaia-ids-file and --lc-catalog are required")
         exit(1)
 
-    gaia_ids = lcs_to_gaia_ids(cmdline_args.lc_path)
-    df_lcs = pd.DataFrame({'gaia_id': list(gaia_ids)})
-    # print(f"df_lcs.head():\n{df_lcs.head()}")
+    if cmdline_args.gaia_ids_file:
+        gaia_ids = set()
+        with open(cmdline_args.gaia_ids_file, 'r') as file:
+            for line in file:
+                try:
+                    gaia_id = line.strip()
+                    gaia_ids.add(gaia_id)
+                except ValueError:
+                    continue
+        print(f'Loaded {len(gaia_ids)} Gaia IDs from file.\n')
+    else:
+        gaia_ids = lcs_to_gaia_ids(cmdline_args.lc_path)
+
+    # df_lcs = pd.DataFrame({'gaia_id': list(gaia_ids)})
     if cmdline_args.skip_gaia_variables:
         print('Skipping Gaia variable query.')
     else:
@@ -700,26 +740,27 @@ def main():
 
     fov_mag_range = find_fov_of_lcs(cmdline_args.lc_catalogs)
 
-    if cmdline_args.tic_gaia_file:
-        gaia_tic = {}
-        with open(cmdline_args.tic_gaia_file, 'r') as file:
-            for line in file:
-                tic_id, gaia_id = map(int, line.strip().split(', '))
-                gaia_tic[gaia_id] = tic_id
-        # add df_lcs here too
+    # if cmdline_args.tic_gaia_file:
+    #     gaia_tic = {}
+    #     with open(cmdline_args.tic_gaia_file, 'r') as file:
+    #         for line in file:
+    #             tic_id, gaia_id = map(int, line.strip().split(', '))
+    #             gaia_tic[gaia_id] = tic_id
+    #     # add df_lcs here too
 
-    elif len(gaia_ids) < 100000:  ### should find the efficient threshold
-        gaia_tic, df_lcs = query_vizier_n_times(gaia_ids, df_lcs, cmdline_args.tic_gaia_fname)
-    else:
-        gaia_tic = query_vizier_once(gaia_ids, cmdline_args.tic_gaia_fname, fov_mag_range)
-        # add df_lcs here too
+    # elif len(gaia_ids) < 100000:  ### should find the efficient threshold
+    #     gaia_tic, df_lcs = query_vizier_n_times(gaia_ids, df_lcs, cmdline_args.tic_gaia_fname)
+    # else:
+    #     gaia_tic = query_vizier_once(gaia_ids, cmdline_args.tic_gaia_fname, fov_mag_range)
+    #     # add df_lcs here too
     
-    if gaia_tic:
-        query_eclipsing_binaries_10k(gaia_tic, eb_fname='apjsade2d8t3_mrt.txt')
-        query_eclipsing_binaries_villa(gaia_tic, eb_fname='villanova.csv')
+    # if gaia_tic:
+    # print(f'Gaia ids min, max: {min(gaia_ids)}, {max(gaia_ids)}\n')
+    # query_eclipsing_binaries_10k(gaia_ids, fov_mag_range, eb_fname='apjsade2d8t3_mrt.txt')
+    query_eclipsing_binaries_villa(gaia_ids, eb_fname='villanova.csv')
     
-    df_lcs.to_csv('df_lcs_with_tic_gaia.csv', index=False)
-    query_toi_in_fov(gaia_tic, cmdline_args.toi_gaia_period_fname, fov_mag_range)
+    # df_lcs.to_csv('df_lcs_with_tic_gaia.csv', index=False)
+    # query_toi_in_fov(gaia_tic, cmdline_args.toi_gaia_period_fname, fov_mag_range)
 
 
 
