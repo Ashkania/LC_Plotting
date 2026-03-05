@@ -51,9 +51,12 @@
     https://discord.com/channels/581176949184135229/1291434287614398494/1356713434086903970
 
     Example usage:
+    0. More recent than 1,2:
+        ./gaia_to_toi.py --gaia-ids-file ./gaia_ids.txt --lc-catalogs ./catalogs/*
+        --skip-gaia-variables --toi-gaia-period-fname toi_gaia_period.txt
     1. When you don't have tic_gaia.txt file:
             python gaia_to_toi.py --lc-path /path/to/lcs/ --lc-catalog /path/to/lc_catalog.fits
-        2. When you already have tic_gaia.txt file:
+    2. When you already have tic_gaia.txt file:
             python gaia_to_toi.py --lc-path /path/to/lcs/ --lc-catalog /path/to/lc_catalog.fits --tic-gaia-file /path/to/tic_gaia.txt
 """
 
@@ -704,11 +707,18 @@ def query_eclipsing_binaries_villa(gaia_ids, eb_fname):
     # print(f'Found {len(eb_query["GAIA"])} EB Gaia IDs.')
 
     print('List of EB in our FOV:')
-    for eb_gaia_id in eb_query['GAIA']:
-        if eb_gaia_id in gaia_ids:
-            tic = eb_query.loc[eb_query['GAIA'] == eb_gaia_id, 'ID'].values[0]
-            period = df_eb.loc[df_eb['TIC'] == int(tic), 'Per'].values[0]
-            print(f'Gaia: {eb_gaia_id}, TIC: {tic}, Period: {period}')
+    
+    with open('villa_eclipsing_binaries.txt', 'w') as file:
+        file.write('GAIA, TIC, Period, Tmag, Epoch\n')
+        
+        for eb_gaia_id in eb_query['GAIA']:
+            if eb_gaia_id in gaia_ids:
+                tic = eb_query.loc[eb_query['GAIA'] == eb_gaia_id, 'ID'].values[0]
+                period = df_eb.loc[df_eb['TIC'] == int(tic), 'Per'].values[0]
+                tmag = df_eb.loc[df_eb['TIC'] == int(tic), 'Tmag'].values[0]
+                epoch = df_eb.loc[df_eb['TIC'] == int(tic), 'bjd0'].values[0]
+                print(f'Gaia: {eb_gaia_id}, TIC: {tic}, Period: {period}, Tmag: {tmag}, Epoch: {epoch}')
+                file.write(f'{eb_gaia_id}, {tic}, {period}, {tmag}, {epoch}\n')
 
 
 def main():
