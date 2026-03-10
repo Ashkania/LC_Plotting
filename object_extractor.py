@@ -76,6 +76,7 @@ from astroquery.vizier import Vizier
 from astroquery.gaia import Gaia
 from configargparse import ArgumentParser, RawDescriptionHelpFormatter
 from astroquery.mast import Catalogs
+from astroquery.ipac.nexsci.nasa_exoplanet_archive import NasaExoplanetArchive
 
 # Configure logging for retry attempts
 logging.basicConfig(
@@ -110,12 +111,7 @@ def parse_command_line():
         help='The output file to write tic to gaia mappings.'
     )
     parser.add_argument(
-        '--tic-gaia-file',
-        default=False,
-        help='if we already have it, specify the file path'
-    )
-    parser.add_argument(
-        '--toi-gaia-period-fname',
+        '--toi-exoplanet-fname',
         default='toi_gaia_period.txt',
         help='The output file to write toi, gaia, period mappings.'
     )
@@ -261,22 +257,32 @@ def query_tic_in_region(fov_mag_range):
 # ------ Extract all GAIA IDs from light curves --------------------#
 # ------------------------------------------------------------------#
 
-def lcs_to_gaia_ids(lc_path):
+def lcs_to_gaia_ids(lc_path, gaia_ids_file=None):
 
-    # Gather all lcs full paths:
-    lcs = sorted(glob.glob(os.path.join(lc_path, '*.h5')))
-    # lcs = ['/path/to/GDR3_1316714794020532096.h5', ...]
+    if gaia_ids_file:
+        gaia_ids = set()
+        with open(gaia_ids_file, 'r') as file:
+            for line in file:
+                try:
+                    gaia_id = line.strip()
+                    gaia_ids.add(gaia_id)
+                except ValueError:
+                    continue
+        print(f'Loaded {len(gaia_ids)} Gaia IDs from file.\n')
+    else:
+        lcs = sorted(glob.glob(os.path.join(lc_path, '*.h5')))
+        # lcs = ['/path/to/GDR3_1316714794020532096.h5', ...]
 
-    # from lc full paths to the int(Gaia id):
-    gaia_ids = {
-        int(os.path.basename(lc).split('_')[1].split('.')[0])
-        for lc in lcs
-    }
-    # gaia_ids = {1316714794020532096, ...}
-    with open('gaia_ids.txt', 'w') as file:
-        for gaia_id in gaia_ids:
-            file.write(f"{gaia_id}\n")
-    print(f'Found {len(gaia_ids)} unique gaia ids. Now querying TIC\n')
+        # from lc full paths to the int(Gaia id):
+        gaia_ids = {
+            int(os.path.basename(lc).split('_')[1].split('.')[0])
+            for lc in lcs
+        }
+        # gaia_ids = {1316714794020532096, ...}
+        with open('gaia_ids_file.txt', 'w') as file:
+            for gaia_id in gaia_ids:
+                file.write(f"{gaia_id}\n")
+        print(f'Found {len(gaia_ids)} unique gaia ids. Now querying TIC\n')
 
     return gaia_ids
 
@@ -379,255 +385,6 @@ def find_fov_of_lcs(lc_catalogs):
 
 
 # ------------------------------------------------------------------#
-# --- For each GAIA ID, query vizier to find its TIC -------------- #
-# -------- (not efficient sometimes) ------------------------------ #
-# --- ORIGINAL TAP VERSION (kept for reference) ------------------- #
-# ------------------------------------------------------------------#
-
-def query_vizier_n_times_tap(gaia_ids, tic_gaia_fname):
-
-    tic_gaia = {}
-
-    n = 0
-    for gaia_id in gaia_ids:
-        n += 1
-        if n % 10 == 0: print(f'TIC Query result: passed {n}')
-
-        query_gaia_to_tic = tap_vizier_query(
-            url='http://tapvizier.u-strasbg.fr/TAPVizieR/tap/',
-            headers='*', # or just TIC column?
-            table_database='"IV/39/tic82"', 
-            # TESS Input Catalog version 8.2 (TIC v8.2) (Paegert+, 2021) 1.7 Bilion rows
-            constraints=['GAIA=' + str(gaia_id)]
-        )
-        if len(query_gaia_to_tic) > 0:
-            tic_id = query_gaia_to_tic['TIC'].data[0]
-            tic_gaia[tic_id] = gaia_id
-
-    print(f'Found {len(tic_gaia)} unique TIC ids.\n')
-
-    with open(tic_gaia_fname, 'w') as file:
-        for tic_id, gaia_id in tic_gaia.items():
-            file.write(f"{tic_id}, {gaia_id}\n")
-    
-    return tic_gaia
-
-
-# ------------------------------------------------------------------#
-# -- For each GAIA ID, query vizier to find its TIC (ASTROQUERY) -- #
-# ------------------------------------------------------------------#
-
-def query_vizier_n_times(gaia_ids, df_lcs, tic_gaia_fname):
-
-    gaia_tic = {}
-
-    n = 0
-    for gaia_id in gaia_ids:
-        n += 1
-        if n % 10 == 0: print(f'TIC Query result: passed {n}')
-
-        result = query_tic_by_gaia(gaia_id)
-        
-        if result is not None and len(result) > 0:
-            tic_id = result['TIC'][0]
-            # df_lcs['gaia_id'] 
-            gaia_tic[gaia_id] = tic_id
-    df_gaia_tic = pd.DataFrame(list(gaia_tic.items()), columns=['gaia_id', 'tic'])
-    df_lcs = df_lcs.merge(df_gaia_tic, on='gaia_id', how='outer')
-
-
-    print(f'Found {len(gaia_tic)} unique TIC ids.\n')
-
-    with open(tic_gaia_fname, 'w') as file:
-        for gaia_id, tic_id in gaia_tic.items():
-            file.write(f"{tic_id}, {gaia_id}\n")
-    
-    return gaia_tic, df_lcs
-
-
-# ------------------------------------------------------------------#
-# --- Instead of query vizier n times, query it once based on the --#
-# --- FOV of the LCs and then find the TICs from the results -------#
-# --- ORIGINAL TAP VERSION (kept for reference) ------------------- #
-# ------------------------------------------------------------------#
-
-def query_vizier_once_tap(gaia_ids, tic_gaia_fname, fov_mag_range):
-
-    tic_gaia = {}
-
-    query_tic_in_fov = tap_vizier_query(
-        url='http://tapvizier.u-strasbg.fr/TAPVizieR/tap/',
-        headers=['TIC', 'GAIA', 'Vmag', 'RAJ2000', 'DEJ2000'],
-        table_database='"IV/39/tic82"',
-    # TESS Input Catalog version 8.2 (TIC v8.2) (Paegert+, 2021) 1.7 Bilion rows
-        constraints=[
-            f"RAJ2000 BETWEEN {fov_mag_range['ra_min']} AND {fov_mag_range['ra_max']}",
-            f"DEJ2000 BETWEEN {fov_mag_range['dec_min']} AND {fov_mag_range['dec_max']}",
-            f"Vmag < {fov_mag_range['mag_max']} + 1.0"
-        ]
-    )
-
-    print(f'Found {len(query_tic_in_fov)} TICs in the specified region.'
-        f' Now check this result for each LC to find matches.\n')
-
-    for row in query_tic_in_fov:
-        if row['GAIA'] in gaia_ids:
-            tic_gaia[row['TIC']] = row['GAIA']
-
-
-    print(f'Found {len(tic_gaia)} matched TICs.\n')
-
-
-    with open(tic_gaia_fname, 'w') as file:
-        for tic_id, gaia_id in tic_gaia.items():
-            file.write(f"{tic_id}, {gaia_id}\n")
-
-    return tic_gaia
-
-
-# ------------------------------------------------------------------#
-# --- Instead of query vizier n times, query it once based on the - #
-# --- FOV of the LCs and then find the TICs from the results -------#
-# --- ASTROQUERY VERSION ------------------------------------------ #
-# ------------------------------------------------------------------#
-
-def query_vizier_once(gaia_ids, tic_gaia_fname, fov_mag_range):
-
-    tic_gaia = {}
-
-    result = query_tic_in_region(fov_mag_range)
-    
-    if result is None:
-        print('No TICs found in the specified region.')
-        return tic_gaia
-
-    print(f'Found {len(result)} TICs in the specified region.'
-        f' Now check this result for each LC to find matches.\n')
-
-    for row in result:
-        # print(f'row: {row}')  # Debug print to check the structure of the row
-        gaia_val = row['GAIA']
-        # print(f'gaia_val: {gaia_val}')  # Debug print to check the GAIA value
-        # Handle cases where GAIA might be None or masked
-        if gaia_val is not None and gaia_val != '':
-            try:
-                gaia_id = int(gaia_val) if isinstance(gaia_val, str) else gaia_val
-                # print(f'gaia_id: {gaia_id}')  # Debug print to check the parsed Gaia ID
-                if gaia_id in gaia_ids:
-                    tic_gaia[int(row['TIC'])] = gaia_id
-            except (ValueError, TypeError):
-                continue
-
-    print(f'Found {len(tic_gaia)} matched TICs.\n')
-
-    with open(tic_gaia_fname, 'w') as file:
-        for tic_id, gaia_id in tic_gaia.items():
-            file.write(f"{tic_id}, {gaia_id}\n")
-
-    return tic_gaia
-
-
-# ------------------------------------------------------------------#
-# --- Instead of query n times, do it once based on the ------------#
-# --- FOV of the LCs to find the TOI IDs in that FOV,   ------------#
-# --- then check to see if any of them exist in our LCs ------------#
-# --- ORIGINAL TAP VERSION (kept for reference) ------------------- #
-# ------------------------------------------------------------------#
-
-def query_toi_in_fov_tap(tic_gaia, toi_gaia_period_fname, fov_mag_range):
-
-    query_toi_in_fov = tap_vizier_query(
-        url='https://exoplanetarchive.ipac.caltech.edu/TAP',
-        headers='*',
-        table_database='toi',
-        constraints=[
-            f"RA BETWEEN {fov_mag_range['ra_min']} AND {fov_mag_range['ra_max']}",
-            f"DEC BETWEEN {fov_mag_range['dec_min']} AND {fov_mag_range['dec_max']}",
-            f"ST_TMAG < {fov_mag_range['mag_max']} + 1.0"
-        ]
-    )
-
-    print(f'Found {len(query_toi_in_fov)} TOIs in the specified region.'
-          f' Now check LCs for each TOI to find matches.\n')
-
-    tic_gaia_period = {}
-
-    for row in query_toi_in_fov:
-        if row['tid'] in tic_gaia:
-            tic_gaia_period[(row['tid'], tic_gaia[row['tid']])] = row['pl_orbper']
-
-    print(
-        f'Found {len(tic_gaia_period)} TOI with their periods. Now writing to file '
-        f'as: TIC, Gaia id, Period'
-    )
-
-    with open(toi_gaia_period_fname, 'w') as file:
-        for (tic_id, gaia_id), period in tic_gaia_period.items():
-            file.write(f"{tic_id}, {gaia_id}, {period}\n")
-
-
-# ------------------------------------------------------------------#
-# --- Instead of query n times, do it once based on the ------------#
-# --- FOV of the LCs to find the TOI IDs in that FOV,   ------------#
-# --- then check to see if any of them exist in our LCs ------------#
-# --- ASTROQUERY VERSION ------------------------------------------ #
-# ------------------------------------------------------------------#
-
-def query_toi_in_fov(tic_gaia, toi_gaia_period_fname, fov_mag_range):
-
-    # Query TOI catalog from exoplanet archive
-    viz = Vizier(columns=['TOI', 'TIC', 'pl_orbper'])
-    viz.ROW_LIMIT = -1
-    
-    # Calculate region center and radius
-    ra_center = (fov_mag_range['ra_min'] + fov_mag_range['ra_max']) / 2
-    dec_center = (fov_mag_range['dec_min'] + fov_mag_range['dec_max']) / 2
-    ra_width = abs(fov_mag_range['ra_max'] - fov_mag_range['ra_min'])
-    dec_width = abs(fov_mag_range['dec_max'] - fov_mag_range['dec_min'])
-    radius = max(ra_width, dec_width) / 2 + 0.5
-    
-    coord = SkyCoord(ra=ra_center, dec=dec_center, unit=(u.deg, u.deg))
-    
-    # Query TOI catalog (available through Vizier)
-    try:
-        result = viz.query_region(coord, radius=radius * u.deg, catalog='IV/38/toi')
-        if len(result) > 0:
-            query_toi_result = result[0]
-        else:
-            query_toi_result = None
-    except Exception as e:
-        print(f"Error querying TOI catalog: {e}")
-        query_toi_result = None
-
-    if query_toi_result is None:
-        print('No TOIs found in the specified region.')
-        return
-
-    print(f'Found {len(query_toi_result)} TOIs in the specified region.'
-          f' Now check LCs for each TOI to find matches.\n')
-
-    tic_gaia_period = {}
-
-    for row in query_toi_result:
-        try:
-            tic_id = int(row['TIC'])
-            if tic_id in tic_gaia:
-                period = row['pl_orbper']
-                if period is not None:
-                    tic_gaia_period[(tic_id, tic_gaia[tic_id])] = float(period)
-        except (ValueError, TypeError, KeyError):
-            continue
-
-    print(
-        f'Found {len(tic_gaia_period)} TOI with their periods. Now writing to file '
-        f'as: TIC, Gaia id, Period'
-    )
-
-    with open(toi_gaia_period_fname, 'w') as file:
-        for (tic_id, gaia_id), period in tic_gaia_period.items():
-            file.write(f"{tic_id}, {gaia_id}, {period}\n")
-
-# ------------------------------------------------------------------#
 # --- Query for eclipsing binaries in the TIC list ----------------#
 # ------------------------------------------------------------------#
 
@@ -675,16 +432,22 @@ def query_eclipsing_binaries_10k(gaia_ids, fov_mag_range, eb_fname):
         &(df_eb.Tmag<fov_mag_range['mag_max'] + 1.0)
     ]
 
-    eb_gaia_ids = Catalogs.query_criteria(
+    eb_query = Catalogs.query_criteria(
         catalog="Tic",
         ID=sub_df_eb.TIC
-    )["GAIA"]
-    print(f'Found {len(eb_gaia_ids)} EB Gaia IDs.')
-    # print(eb_gaia_ids)
-
-    for eb_gaia_id in eb_gaia_ids:
-        if eb_gaia_id in gaia_ids:
-            print(f"Found EB in TIC list: {eb_gaia_id}")
+    ).to_pandas()
+    
+    with open('prsa_eclipsing_binaries.txt', 'w') as file:
+        file.write('GAIA, TIC, Period, Tmag, Epoch\n')
+        
+        for eb_gaia_id in eb_query['GAIA']:
+            if eb_gaia_id in gaia_ids:
+                tic = eb_query.loc[eb_query['GAIA'] == eb_gaia_id, 'ID'].values[0]
+                period = sub_df_eb.loc[sub_df_eb['TIC'] == int(tic), 'Per'].values[0]
+                tmag = sub_df_eb.loc[sub_df_eb['TIC'] == int(tic), 'Tmag'].values[0]
+                epoch = sub_df_eb.loc[sub_df_eb['TIC'] == int(tic), 'T0_pri'].values[0]
+                # print(f'Gaia: {eb_gaia_id}, TIC: {tic}, Period: {period}, Tmag: {tmag}, Epoch: {epoch}')
+                file.write(f'{eb_gaia_id}, {tic}, {period}, {tmag}, {epoch}\n')
 
 
 def query_eclipsing_binaries_villa(gaia_ids, eb_fname):
@@ -706,7 +469,7 @@ def query_eclipsing_binaries_villa(gaia_ids, eb_fname):
 
     # print(f'Found {len(eb_query["GAIA"])} EB Gaia IDs.')
 
-    print('List of EB in our FOV:')
+    # print('List of EB in our FOV:')
     
     with open('villa_eclipsing_binaries.txt', 'w') as file:
         file.write('GAIA, TIC, Period, Tmag, Epoch\n')
@@ -717,9 +480,74 @@ def query_eclipsing_binaries_villa(gaia_ids, eb_fname):
                 period = df_eb.loc[df_eb['TIC'] == int(tic), 'Per'].values[0]
                 tmag = df_eb.loc[df_eb['TIC'] == int(tic), 'Tmag'].values[0]
                 epoch = df_eb.loc[df_eb['TIC'] == int(tic), 'bjd0'].values[0]
-                print(f'Gaia: {eb_gaia_id}, TIC: {tic}, Period: {period}, Tmag: {tmag}, Epoch: {epoch}')
+                # print(f'Gaia: {eb_gaia_id}, TIC: {tic}, Period: {period}, Tmag: {tmag}, Epoch: {epoch}')
                 file.write(f'{eb_gaia_id}, {tic}, {period}, {tmag}, {epoch}\n')
 
+
+def query_toi(gaia_ids, fov_mag_range):
+    df_toi = NasaExoplanetArchive.query_criteria(
+        table="toi",
+        select="tid, pl_orbper, st_tmag, ra, dec",
+        where=(
+            f"ra BETWEEN {fov_mag_range['ra_min']} AND {fov_mag_range['ra_max']} AND "
+            f"dec BETWEEN {fov_mag_range['dec_min']} AND {fov_mag_range['dec_max']} AND "
+            f"st_tmag < {fov_mag_range['mag_max']} + 1.0"
+        )
+    ).to_pandas()
+
+    toi_query = Catalogs.query_criteria(
+        catalog="Tic",
+        ID=df_toi.tid
+    ).to_pandas()
+
+    with open('toi_in_fov.txt', 'w') as file:
+        file.write('GAIA, TIC, Period, Tmag, RA, Dec\n')
+        
+        for toi_gaia_id in toi_query['GAIA']:
+            if toi_gaia_id in gaia_ids:
+                tic = toi_query.loc[toi_query['GAIA'] == toi_gaia_id, 'ID'].values[0]
+                period = df_toi.loc[df_toi['tid'] == int(tic), 'pl_orbper'].values[0]
+                tmag = df_toi.loc[df_toi['tid'] == int(tic), 'st_tmag'].values[0]
+                epoch = 2457000
+                file.write(f'{toi_gaia_id}, {tic}, {period}, {tmag}, {epoch}\n')
+
+
+def query_exoplanet(gaia_ids, fov_mag_range):
+    df_exoplanets = NasaExoplanetArchive.query_criteria(
+        table="pscomppars",
+        select="gaia_dr3_id, pl_name, tic_id, pl_orbper, sy_vmag, ra, dec",
+        where=(
+            f"ra BETWEEN {fov_mag_range['ra_min']} AND {fov_mag_range['ra_max']} AND "
+            f"dec BETWEEN {fov_mag_range['dec_min']} AND {fov_mag_range['dec_max']} AND "
+            f"sy_vmag < {fov_mag_range['mag_max']} + 1.0"
+        )
+    ).to_pandas()
+
+    # tic_lookup = Catalogs.query_criteria(
+    #     catalog="Tic",
+    #     ID=df_exoplanets["tic_id"].astype(int).tolist()
+    # ).to_pandas()
+
+    with open('exoplanets_in_fov.txt', 'w') as file:
+        file.write('GAIA, TIC, Period, Vmag, Epoch, Name, RA, Dec\n')
+
+        for row in df_exoplanets.itertuples():
+            try:
+                exoplanet_gaia_id = row.gaia_dr3_id.split()[-1]
+            except:
+                print(f"Error processing row: {row}")
+                continue
+            if exoplanet_gaia_id in gaia_ids:
+                tic = row.tic_id
+                # pl_name = row.pl_name
+                period = row.pl_orbper
+                vmag = row.sy_vmag
+                # ra = row.ra
+                # dec = row.dec
+                epoch = 2457000
+                file.write(
+                    f"{exoplanet_gaia_id}, {tic}, {period}, {vmag}, {epoch}\n"
+                )
 
 def main():
 
@@ -728,50 +556,22 @@ def main():
         print("Error: --lc-path or --gaia-ids-file and --lc-catalog are required")
         exit(1)
 
-    if cmdline_args.gaia_ids_file:
-        gaia_ids = set()
-        with open(cmdline_args.gaia_ids_file, 'r') as file:
-            for line in file:
-                try:
-                    gaia_id = line.strip()
-                    gaia_ids.add(gaia_id)
-                except ValueError:
-                    continue
-        print(f'Loaded {len(gaia_ids)} Gaia IDs from file.\n')
-    else:
-        gaia_ids = lcs_to_gaia_ids(cmdline_args.lc_path)
+    gaia_ids = lcs_to_gaia_ids(cmdline_args.lc_path,
+                               cmdline_args.gaia_ids_file)
+    fov_mag_range = find_fov_of_lcs(cmdline_args.lc_catalogs)
 
-    # df_lcs = pd.DataFrame({'gaia_id': list(gaia_ids)})
     if cmdline_args.skip_gaia_variables:
         print('Skipping Gaia variable query.')
     else:
         _ = gaia_ids_to_variables(gaia_ids)
-    # print(f'ebb: {len(ebb)}, rr: {len(rr)}')
 
-    fov_mag_range = find_fov_of_lcs(cmdline_args.lc_catalogs)
-
-    # if cmdline_args.tic_gaia_file:
-    #     gaia_tic = {}
-    #     with open(cmdline_args.tic_gaia_file, 'r') as file:
-    #         for line in file:
-    #             tic_id, gaia_id = map(int, line.strip().split(', '))
-    #             gaia_tic[gaia_id] = tic_id
-    #     # add df_lcs here too
-
-    # elif len(gaia_ids) < 100000:  ### should find the efficient threshold
-    #     gaia_tic, df_lcs = query_vizier_n_times(gaia_ids, df_lcs, cmdline_args.tic_gaia_fname)
-    # else:
-    #     gaia_tic = query_vizier_once(gaia_ids, cmdline_args.tic_gaia_fname, fov_mag_range)
-    #     # add df_lcs here too
-    
-    # if gaia_tic:
-    # print(f'Gaia ids min, max: {min(gaia_ids)}, {max(gaia_ids)}\n')
-    # query_eclipsing_binaries_10k(gaia_ids, fov_mag_range, eb_fname='apjsade2d8t3_mrt.txt')
-    query_eclipsing_binaries_villa(gaia_ids, eb_fname='villanova.csv')
+    query_eclipsing_binaries_10k(gaia_ids, fov_mag_range, eb_fname='./object_lists/apjsade2d8t3_mrt.txt')
+    query_eclipsing_binaries_villa(gaia_ids, eb_fname='./object_lists/villanova.csv')
     
     # df_lcs.to_csv('df_lcs_with_tic_gaia.csv', index=False)
-    # query_toi_in_fov(gaia_tic, cmdline_args.toi_gaia_period_fname, fov_mag_range)
-
+    # query_toi_in_fov(cmdline_args.toi_exoplanet_fname, fov_mag_range)
+    query_toi(gaia_ids, fov_mag_range)
+    query_exoplanet(gaia_ids, fov_mag_range)
 
 
 if __name__ == '__main__':
