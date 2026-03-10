@@ -1,11 +1,5 @@
-toi_gaia_period.txt
-tic_gaia.txt
-gaia_toi_period.txt
-LC/
-V702_Aur_R.png
+Inputs/
+Results/
+bkp/
 .gitignore
-V702_Aur_V.png
-Light Curve.png
-catalogs/
-*.png
-tic_gaia_astroquery.txt
+

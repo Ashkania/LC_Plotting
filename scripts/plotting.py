@@ -92,8 +92,8 @@ def read_lc_from_hdf5(hdf5_file, aperture=4, fold_by='photref'):
         
         bjds = f[f'SkyPosition/BJD'][:]
         
-        mag_epd = f[f'AperturePhotometry/Aperture{aperture:03}/EPD/Magnitude'][:]
         mag_magfit = f[f'AperturePhotometry/Aperture{aperture:03}/MagnitudeFitting/Magnitude'][:]
+        mag_epd = f[f'AperturePhotometry/Aperture{aperture:03}/EPD/Magnitude'][:]
 
         for mag_array in [mag_epd, mag_magfit]:
             mag_array[mag_array < -1e5] = np.nan  # Replace NaN (large negative) values with NaN
@@ -303,7 +303,8 @@ def main():
             f'{object_name} - folded by: {fold_by}',
             fontdict={"fontweight":"bold", 'fontsize':16}
             )
-        plt.ylim(0.1, -0.1)
+        plt.ylim(1, -0.5)
+        plt.savefig(f'{object_name}_folded_by_{fold_by}_combined', dpi=400)
         plt.show()
 
 

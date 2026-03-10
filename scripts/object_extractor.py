@@ -279,7 +279,7 @@ def lcs_to_gaia_ids(lc_path, gaia_ids_file=None):
             for lc in lcs
         }
         # gaia_ids = {1316714794020532096, ...}
-        with open('gaia_ids_file.txt', 'w') as file:
+        with open('./Results/objects_lists/gaia_ids.txt', 'w') as file:
             for gaia_id in gaia_ids:
                 file.write(f"{gaia_id}\n")
         print(f'Found {len(gaia_ids)} unique gaia ids. Now querying TIC\n')
@@ -437,7 +437,7 @@ def query_eclipsing_binaries_10k(gaia_ids, fov_mag_range, eb_fname):
         ID=sub_df_eb.TIC
     ).to_pandas()
     
-    with open('prsa_eclipsing_binaries.txt', 'w') as file:
+    with open('./Results/objects_lists/prsa_eclipsing_binaries.txt', 'w') as file:
         file.write('GAIA, TIC, Period, Tmag, Epoch\n')
         
         for eb_gaia_id in eb_query['GAIA']:
@@ -471,7 +471,7 @@ def query_eclipsing_binaries_villa(gaia_ids, eb_fname):
 
     # print('List of EB in our FOV:')
     
-    with open('villa_eclipsing_binaries.txt', 'w') as file:
+    with open('./Results/objects_lists/villa_eclipsing_binaries.txt', 'w') as file:
         file.write('GAIA, TIC, Period, Tmag, Epoch\n')
         
         for eb_gaia_id in eb_query['GAIA']:
@@ -500,7 +500,7 @@ def query_toi(gaia_ids, fov_mag_range):
         ID=df_toi.tid
     ).to_pandas()
 
-    with open('toi_in_fov.txt', 'w') as file:
+    with open('./Results/objects_lists/NEA_TOI.txt', 'w') as file:
         file.write('GAIA, TIC, Period, Tmag, RA, Dec\n')
         
         for toi_gaia_id in toi_query['GAIA']:
@@ -528,7 +528,7 @@ def query_exoplanet(gaia_ids, fov_mag_range):
     #     ID=df_exoplanets["tic_id"].astype(int).tolist()
     # ).to_pandas()
 
-    with open('exoplanets_in_fov.txt', 'w') as file:
+    with open('./Results/objects_lists/NEA_exoplanets.txt', 'w') as file:
         file.write('GAIA, TIC, Period, Vmag, Epoch, Name, RA, Dec\n')
 
         for row in df_exoplanets.itertuples():
@@ -565,8 +565,8 @@ def main():
     else:
         _ = gaia_ids_to_variables(gaia_ids)
 
-    query_eclipsing_binaries_10k(gaia_ids, fov_mag_range, eb_fname='./object_lists/apjsade2d8t3_mrt.txt')
-    query_eclipsing_binaries_villa(gaia_ids, eb_fname='./object_lists/villanova.csv')
+    query_eclipsing_binaries_10k(gaia_ids, fov_mag_range, eb_fname='./Inputs/object_lists/apjsade2d8t3_mrt.txt')
+    query_eclipsing_binaries_villa(gaia_ids, eb_fname='./Inputs/object_lists/villanova.csv')
     
     # df_lcs.to_csv('df_lcs_with_tic_gaia.csv', index=False)
     # query_toi_in_fov(cmdline_args.toi_exoplanet_fname, fov_mag_range)
