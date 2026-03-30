@@ -40,7 +40,7 @@ def load_data(dr, gaia_id):
             y = f['/ProjectedSources/Version000/y'][:][gaia_index]
         except:
             # print(f"Gaia ID {gaia_id} not found in DR file")
-            x, y = None, None
+            return None, None
     
     return x.item(), y.item()
 
