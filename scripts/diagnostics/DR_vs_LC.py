@@ -42,7 +42,7 @@ def load_data(dr, gaia_id):
             # print(f"Gaia ID {gaia_id} not found in DR file")
             return None, None
     
-    return x.item(), y.item()
+    return x, y
 
 
 
@@ -54,12 +54,14 @@ def main():
     for dr in glob.glob(args.dr_path + "/*.h5"):
         # print(f"Processing DR file: {dr}")
         x, y = load_data(dr, args.gaia_id)
-        if x and y:
-            X.append(x)
-            Y.append(y)
-    
-    print(f'X) min: {min(X)}, max: {max(X)}, len: {len(X)}')
-    print(f'Y) min: {min(Y)}, max: {max(Y)}, len: {len(Y)}')
+        if x is not None and y is not None and x.size > 0 and y.size > 0:
+            X.append(x.item())
+            Y.append(y.item())
+    if X and Y:
+        print(f'X) min: {min(X)}, max: {max(X)}, len: {len(X)}')
+        print(f'Y) min: {min(Y)}, max: {max(Y)}, len: {len(Y)}')
+    else:
+        print("No valid data found for the given Gaia ID across the DR files.")
 
 if __name__ == "__main__":
     main()
