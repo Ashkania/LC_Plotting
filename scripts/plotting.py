@@ -1,12 +1,28 @@
 #!/usr/bin/env python3
 
 """
-    Plot the LC from its hdf5 file
-    To do: how to select best aperture for different kinds of variability
+    Plot the LC from its hdf5 file:
+    
+    1. Read the LC data from the hdf5 file. It includes:
+       bjd, mag_epd, mag_magfit, channels index and photrefs index.
+       Based on the folding method (by channel or photref), data dictionary
+       is constructed to contain separate DataFrames of bjd, epd, magift for each channel/photref.
+       Like:
+         data = {
+              0: DataFrame for channel/channel_camera 0,
+              1: DataFrame for channel/channel_camera 1,
+              ...
+         }
+    We then could plot one for each channel/photref separately (single mode)
+    or combine all channels/photrefs into one plot. (folde mode)
+    
+    2. Optionally apply binning to the data (by time or phase).
+    3. Optionally fold the light curve by a given period and epoch.
+    4. Plot the light curve, either individually for each channel/photref or combined into one figure.
     example:
-    python plotting.py LC/EB_Villa/GDR3_3337025761759515776.h5 
-        --aperture 4 --period 1.7801492 --epoch 1469.56553 --fold-by 'photref'
-        --plot-type 'combined' --binning 'time' 10
+    python scripts/plotting.py LC/EB_Villa/GDR3_3337025761759515776.h5 
+        --aperture 4 --period 1.7801492 --epoch 1469.56553 --sep-by 'photref'
+        --mode 'single' --binning 'time' 10
 """
 
 import h5py
@@ -44,30 +60,34 @@ def parse_arguments():
         help="Reference epoch (t0) for phase folding"
     )
     parser.add_argument(
-        "--fold-by",
+        "--sep-by",
         type=str,
-        choices=['channel', 'photref'],
+        choices=['channel', 'photref', 'camera'],
         default='photref',
-        help="Whether to fold by 'channel' or 'photref' (default: 'photref')"
+        help="Whether to separate by 'channel' or 'photref(=channel and camera)'" \
+        "camera is not implemented yet. (default: 'photref')"
     )
     parser.add_argument(
-        "--plot-type",
-        choices=['individual', 'combined'],
-        default='combined',
-        help="Plot all channels/photrefs in one figure"
+        "--mode",
+        choices=['single', 'folded'],
+        default='single',
+        help="Plot each channel/photrefs(=channel and camera) separately or" \
+        "fold all channels/photrefs(=channel and cameras) on top of each other" \
+        "(default: 'single')"
     )
     parser.add_argument(
         "--binning",
         nargs=2,
         default=None,
         metavar=('METHOD', 'SIZE'),
-        help="Binning method (time/phase) and size (minutes for time, points for phase)"
+        help="Binning method (time/phase) and size (minutes for time, points for phase)" \
+            "(optional, e.g. --binning time 10 or --binning phase 100)"
     )
 
     
     return parser.parse_args()
 
-def read_lc_from_hdf5(hdf5_file, aperture=4, fold_by='photref'):
+def read_lc_from_hdf5(hdf5_file, aperture=4, sep_by='photref'):
     """
     Read light curve data from HDF5 file and organize it by channel or photref.
      Parameters:
@@ -76,8 +96,8 @@ def read_lc_from_hdf5(hdf5_file, aperture=4, fold_by='photref'):
         Path to the HDF5 file containing the light curve data
     aperture : int, optional
         Aperture number to read (default: 4)
-    fold_by : str, optional
-        Whether to fold by 'channel' or 'photref' (default: 'photref')
+    sep_by : str, optional
+        Whether to separate by 'channel' or 'photref' (default: 'photref')
     Returns:
     --------
     data : dict
@@ -100,7 +120,7 @@ def read_lc_from_hdf5(hdf5_file, aperture=4, fold_by='photref'):
         
         data = {}
 
-        if fold_by == 'channel':
+        if sep_by == 'channel':
             for chn in np.unique(channels):
                 mask = channels == chn
                 med_epd = np.nanmedian(mag_epd[mask])
@@ -111,8 +131,9 @@ def read_lc_from_hdf5(hdf5_file, aperture=4, fold_by='photref'):
                     'mag_magfit': mag_magfit[mask] - med_magfit
                 })
 
-        elif fold_by == 'photref':
+        elif sep_by == 'photref':
             for phref in np.unique(photrefs):
+            # for phref in [12, 28, 20]:
                 mask = photrefs == phref
                 med_epd = np.nanmedian(mag_epd[mask])
                 med_magfit = np.nanmedian(mag_magfit[mask])
@@ -121,6 +142,23 @@ def read_lc_from_hdf5(hdf5_file, aperture=4, fold_by='photref'):
                     'mag_epd': mag_epd[mask] - med_epd,
                     'mag_magfit': mag_magfit[mask] - med_magfit
                 })
+        # TODO: find the best way to separate by camera
+        # elif sep_by == 'camera':
+            # for cam in ...:
+            #     for phref in ...:
+            #     mask = (
+            #         (photrefs == phref0) or
+            #         (photrefs == phref1) or
+            #         (photrefs == phref2) or
+            #         (photrefs == phref3)
+            #     )
+            #     med_epd = np.nanmedian(mag_epd[mask])
+            #     med_magfit = np.nanmedian(mag_magfit[mask])
+            #     data[(chn, phref)] = pd.DataFrame({
+            #         'bjd': bjds[mask],
+            #         'mag_epd': mag_epd[mask] - med_epd,
+            #         'mag_magfit': mag_magfit[mask] - med_magfit
+            #     })
 
     return data
 
@@ -193,7 +231,7 @@ def calculate_phase(bjd, period, epoch):
     return phase
 
 def plot_light_curve(bjd, mag_epd, mag_magfit,
-                     fold_by, plot_type,
+                     sep_by, mode,
                      object_name, chn_or_phref,
                      xlabel, period=None
                     ):
@@ -201,18 +239,19 @@ def plot_light_curve(bjd, mag_epd, mag_magfit,
     Plot light curve.
     """
     # plt.figure(figsize=(10, 5))
+    plt.scatter(bjd, mag_magfit, s=10, color='blue', alpha=0.5, label='MagFit')
     plt.scatter(bjd, mag_epd, s=10, color='red', alpha=0.5, label='EPD')
-    # plt.scatter(bjd, mag_magfit, s=10, color='blue', alpha=0.5, label='MagFit')
-    
+
     plt.gca().invert_yaxis()  # Magnitude axis is inverted
     plt.xlabel(xlabel, fontdict={"fontweight":"bold", 'fontsize':14})
     plt.ylabel("Magnitude", fontdict={"fontweight":"bold", 'fontsize':14})
-    plt.ylim(1.5, -0.6)
+    plt.ylim(0.5, -0.5)
+    # plt.xlim(9900, 9907)
     plt.grid(True)
     # plt.legend()
     # plt.savefig(f'{object_name}_Chn_or_photref_{chn_or_phref}',dpi=400)
-    if plot_type == 'individual':
-        plt.title(f'{object_name} - {fold_by}: {chn_or_phref}', fontdict={"fontweight":"bold", 'fontsize':16})
+    if mode == 'single':
+        plt.title(f'{object_name} - {sep_by}: {chn_or_phref}', fontdict={"fontweight":"bold", 'fontsize':16})
         plt.show()
 
 def main():
@@ -223,15 +262,15 @@ def main():
     aperture = args.aperture
     period = args.period
     epoch = args.epoch
-    fold_by = args.fold_by
-    plot_type = args.plot_type
+    sep_by = args.sep_by
+    mode = args.mode
     binning_method = args.binning[0] if args.binning else None
     binning_size = float(args.binning[1]) if args.binning else None
 
-    data = read_lc_from_hdf5(hdf5_file, aperture, fold_by)
+    data = read_lc_from_hdf5(hdf5_file, aperture, sep_by)
 
     # If combined plot type with binning, merge all dataframes first
-    if plot_type == 'combined' and binning_method:
+    if mode == 'folded' and binning_method:
         all_bjds = []
         all_mag_epd = []
         all_mag_magfit = []
@@ -269,23 +308,22 @@ def main():
         
         plot_light_curve(
             x_plot, mag_epd_binned, mag_magfit_binned,
-            fold_by, plot_type,
-            object_name, 'combined',
+            sep_by, mode,
+            object_name, 'folded',
             xlabel=xlabel, period=period
         )
-    else:
+    elif mode == 'single':
         # Original logic for individual or combined without binning
         for chn_or_phref in sorted(data.keys()):
             df = data[chn_or_phref]
             x_values = df['bjd'].values
             mag_epd = df['mag_epd'].values
             mag_magfit = df['mag_magfit'].values
-        
             if period:
                 phase = calculate_phase(x_values, period, epoch)
                 plot_light_curve(
                     phase, mag_epd, mag_magfit,
-                    fold_by, plot_type,
+                    sep_by, mode,
                     object_name, chn_or_phref,
                     xlabel="Phase", period=period
                     )
@@ -294,17 +332,18 @@ def main():
                 bjd = x_values - 2450000
                 plot_light_curve(
                     bjd, mag_epd, mag_magfit,
-                    fold_by, plot_type,
+                    sep_by, mode,
                     object_name, chn_or_phref,
                     xlabel="BJD - 2450000"
                     )
-    if plot_type == 'combined':
+                
+    if mode == 'folded':
         plt.title(
-            f'{object_name} - folded by: {fold_by}',
+            f'{object_name} - separated by: {sep_by}',
             fontdict={"fontweight":"bold", 'fontsize':16}
             )
-        plt.ylim(1, -0.5)
-        plt.savefig(f'{object_name}_folded_by_{fold_by}_combined', dpi=400)
+        plt.ylim(0.3, -0.1)
+        plt.savefig(f'{object_name}_separated_by_{sep_by}_folded', dpi=400)
         plt.show()
 
 
