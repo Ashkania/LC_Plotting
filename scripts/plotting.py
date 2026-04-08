@@ -104,6 +104,8 @@ def read_lc_from_hdf5(hdf5_file, aperture=4, sep_by='photref'):
         Dictionary of DataFrames keyed by channel or photref
         ex: data = {0: DataFrame, 1: DataFrame, ...}
         Each DataFrame has columns: 'bjd', 'mag_epd', 'mag_magfit'
+    photref_dict : dict or None
+        Dictionary mapping photref index to processed name, only if sep_by='photref'
     """
 
     with h5py.File(hdf5_file, 'r') as f:
@@ -119,6 +121,7 @@ def read_lc_from_hdf5(hdf5_file, aperture=4, sep_by='photref'):
             mag_array[mag_array < -1e5] = np.nan  # Replace NaN (large negative) values with NaN
         
         data = {}
+        photref_dict = {}
 
         if sep_by == 'channel':
             for chn in np.unique(channels):
@@ -132,6 +135,16 @@ def read_lc_from_hdf5(hdf5_file, aperture=4, sep_by='photref'):
                 })
 
         elif sep_by == 'photref':
+            photrefsnames = f[f'AperturePhotometry/Aperture000/MagnitudeFitting/Configuration/SinglePhotometricReference'][:]
+            for i, name in enumerate(photrefsnames):
+                name = name.decode('utf-8')
+                part1 = name[name.find('DR')+3:name.find('DR')+7]
+                # Find second occurrence of 'PAN' (not the one in 'PANOPTES')
+                second_pan = name.find('PAN', name.find('PAN') + 1)
+                part2 = name[second_pan - 3:second_pan - 1]
+                part3 = name[-5:-3]
+                photref_dict[i] = f"{part1}_{part2}_{part3}"
+            
             for phref in np.unique(photrefs):
             # for phref in [12, 28, 20]:
                 mask = photrefs == phref
@@ -156,11 +169,11 @@ def read_lc_from_hdf5(hdf5_file, aperture=4, sep_by='photref'):
             #     med_magfit = np.nanmedian(mag_magfit[mask])
             #     data[(chn, phref)] = pd.DataFrame({
             #         'bjd': bjds[mask],
-            #         'mag_epd': mag_epd[mask] - med_epd,
-            #         'mag_magfit': mag_magfit[mask] - med_magfit
-            #     })
+            # 'mag_epd': mag_epd[mask] - med_epd,
+            # 'mag_magfit': mag_magfit[mask] - med_magfit
+                # })
 
-    return data
+    return data, photref_dict
 
 def apply_binning(df, x_values, method, bin_size):
     """
@@ -233,7 +246,7 @@ def calculate_phase(bjd, period, epoch):
 def plot_light_curve(bjd, mag_epd, mag_magfit,
                      sep_by, mode,
                      object_name, chn_or_phref,
-                     xlabel, period=None
+                     xlabel, period=None, photref_dict=None
                     ):
     """
     Plot light curve.
@@ -251,7 +264,8 @@ def plot_light_curve(bjd, mag_epd, mag_magfit,
     # plt.legend()
     # plt.savefig(f'{object_name}_Chn_or_photref_{chn_or_phref}',dpi=400)
     if mode == 'single':
-        plt.title(f'{object_name} - {sep_by}: {chn_or_phref}', fontdict={"fontweight":"bold", 'fontsize':16})
+        title_part = photref_dict.get(chn_or_phref, chn_or_phref) if photref_dict else chn_or_phref
+        plt.title(f'{object_name} - {sep_by}: {title_part}', fontdict={"fontweight":"bold", 'fontsize':12})
         plt.show()
 
 def main():
@@ -267,7 +281,7 @@ def main():
     binning_method = args.binning[0] if args.binning else None
     binning_size = float(args.binning[1]) if args.binning else None
 
-    data = read_lc_from_hdf5(hdf5_file, aperture, sep_by)
+    data, photref_dict = read_lc_from_hdf5(hdf5_file, aperture, sep_by)
 
     # If combined plot type with binning, merge all dataframes first
     if mode == 'folded' and binning_method:
@@ -310,7 +324,7 @@ def main():
             x_plot, mag_epd_binned, mag_magfit_binned,
             sep_by, mode,
             object_name, 'folded',
-            xlabel=xlabel, period=period
+            xlabel=xlabel, period=period, photref_dict=photref_dict
         )
     elif mode == 'single':
         # Original logic for individual or combined without binning
@@ -325,7 +339,7 @@ def main():
                     phase, mag_epd, mag_magfit,
                     sep_by, mode,
                     object_name, chn_or_phref,
-                    xlabel="Phase", period=period
+                    xlabel="Phase", period=period, photref_dict=photref_dict
                     )
             else:
                 # Plot regular light curve
@@ -334,13 +348,13 @@ def main():
                     bjd, mag_epd, mag_magfit,
                     sep_by, mode,
                     object_name, chn_or_phref,
-                    xlabel="BJD - 2450000"
+                    xlabel="BJD - 2450000", photref_dict=photref_dict
                     )
                 
     if mode == 'folded':
         plt.title(
             f'{object_name} - separated by: {sep_by}',
-            fontdict={"fontweight":"bold", 'fontsize':16}
+            fontdict={"fontweight":"bold", 'fontsize':12}
             )
         plt.ylim(0.3, -0.1)
         plt.savefig(f'{object_name}_separated_by_{sep_by}_folded', dpi=400)
