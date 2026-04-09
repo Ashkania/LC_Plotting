@@ -25,6 +25,9 @@
         --mode 'single' --binning 'time' 10
 """
 
+#TODO:
+# last part of the title in the photref case is kinda hardcoded
+
 import h5py
 import numpy as np
 import pandas as pd
@@ -82,6 +85,13 @@ def parse_arguments():
         metavar=('METHOD', 'SIZE'),
         help="Binning method (time/phase) and size (minutes for time, points for phase)" \
             "(optional, e.g. --binning time 10 or --binning phase 100)"
+    )
+    parser.add_argument(
+        "--selected",
+        nargs='*',
+        type=int,
+        default=None,
+        help="List of photref/channel indices to plot (default: all)"
     )
 
     
@@ -258,13 +268,16 @@ def plot_light_curve(bjd, mag_epd, mag_magfit,
     plt.gca().invert_yaxis()  # Magnitude axis is inverted
     plt.xlabel(xlabel, fontdict={"fontweight":"bold", 'fontsize':14})
     plt.ylabel("Magnitude", fontdict={"fontweight":"bold", 'fontsize':14})
-    plt.ylim(0.5, -0.5)
+    plt.ylim(0.7, -0.5)
     # plt.xlim(9900, 9907)
     plt.grid(True)
     # plt.legend()
     # plt.savefig(f'{object_name}_Chn_or_photref_{chn_or_phref}',dpi=400)
     if mode == 'single':
-        title_part = photref_dict.get(chn_or_phref, chn_or_phref) if photref_dict else chn_or_phref
+        if photref_dict and chn_or_phref in photref_dict:
+            title_part = f"{chn_or_phref}: {photref_dict[chn_or_phref]}"
+        else:
+            title_part = chn_or_phref
         plt.title(f'{object_name} - {sep_by}: {title_part}', fontdict={"fontweight":"bold", 'fontsize':12})
         plt.show()
 
@@ -282,6 +295,12 @@ def main():
     binning_size = float(args.binning[1]) if args.binning else None
 
     data, photref_dict = read_lc_from_hdf5(hdf5_file, aperture, sep_by)
+
+    if args.selected:
+        selected = args.selected
+        data = {k: v for k, v in data.items() if k in selected}
+        if photref_dict:
+            photref_dict = {k: v for k, v in photref_dict.items() if k in selected}
 
     # If combined plot type with binning, merge all dataframes first
     if mode == 'folded' and binning_method:
