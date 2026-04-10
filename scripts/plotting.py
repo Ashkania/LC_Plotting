@@ -34,6 +34,7 @@ import h5py
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+import lightkurve as lk
 from argparse import ArgumentParser
 
 def parse_arguments():
@@ -95,11 +96,16 @@ def parse_arguments():
         default=None,
         help="List of photref/channel indices to plot (default: all)"
     )
+    parser.add_argument(
+        "--TESS-plot",
+        default=False,
+        action='store_true',
+        help="Plot TESS light curve for the same object on top of the PANOPTES data"
+    )
 
-    
     return parser.parse_args()
 
-def read_lc_from_hdf5(hdf5_file, aperture=4, sep_by='photref'):
+def read_lc(hdf5_file, aperture=4, sep_by='photref'):
     """
     Read light curve data from HDF5 file and organize it by channel or photref.
      Parameters:
@@ -255,15 +261,36 @@ def calculate_phase(bjd, period, epoch):
     phase = ((bjd - epoch) / period) % 1.0
     return phase
 
-def plot_light_curve(bjd, mag_epd, mag_magfit,
-                     sep_by, mode,
+def plot_TESS_lc(gaia_id, period, epoch):
+    """
+    Plot TESS light curve for the given Gaia ID, period, and epoch.
+    """
+    search = lk.search_lightcurve(gaia_id, mission="TESS")
+    print(search)
+
+    lc = search.download()
+    lc = lc.remove_nans().normalize()
+    lc = lc.flatten(window_length=401)
+    
+    time_tess = lc.time.value
+    phase = ((time_tess - epoch) / period) % 1
+    flux_tess = lc.flux.value
+    mag_tess = -2.5 * np.log10(flux_tess)
+
+    plt.scatter(phase, mag_tess, s=1, color='green', alpha=0.7, label="TESS")
+
+
+def plot_lc(bjd, mag_epd, mag_magfit,
+                     TESS_plot, sep_by, mode,
                      object_name, chn_or_phref,
-                     xlabel, period=None, photref_dict=None
+                     xlabel, photref_dict=None
                     ):
     """
     Plot light curve.
     """
     # plt.figure(figsize=(10, 5))
+    if TESS_plot:
+        pass
     plt.scatter(bjd, mag_magfit, s=10, color='blue', alpha=0.5, label='MagFit')
     plt.scatter(bjd, mag_epd, s=10, color='red', alpha=0.5, label='EPD')
 
@@ -287,16 +314,18 @@ def main():
 
     args = parse_arguments()
     hdf5_file = args.hdf5_file
+    gaia_id = hdf5_file.split('/')[-1].split('.')[0].split('_')[1]
     object_name = hdf5_file.split('/')[-1].split('.')[0]
     aperture = args.aperture
     period = args.period
     epoch = args.epoch
     sep_by = args.sep_by
     mode = args.mode
+    TESS_plot = args.TESS_plot
     binning_method = args.binning[0] if args.binning else None
     binning_size = float(args.binning[1]) if args.binning else None
 
-    data, photref_dict = read_lc_from_hdf5(hdf5_file, aperture, sep_by)
+    data, photref_dict = read_lc(hdf5_file, aperture, sep_by)
 
     if args.selected:
         selected = args.selected
@@ -304,7 +333,6 @@ def main():
         if photref_dict:
             photref_dict = {k: v for k, v in photref_dict.items() if k in selected}
 
-    # If combined plot type with binning, merge all dataframes first
     if mode == 'folded':
         all_bjds_list_of_lists = []
         all_mag_epd_list_of_lists = []
@@ -320,23 +348,21 @@ def main():
         all_mag_epd = np.concatenate(all_mag_epd_list_of_lists)
         all_mag_magfit = np.concatenate(all_mag_magfit_list_of_lists)
         
-        # Create combined DataFrame with all columns and sort by bjd
         combined_df = pd.DataFrame({
             'bjd': all_bjds,
             'mag_epd': all_mag_epd,
             'mag_magfit': all_mag_magfit
         })
-        combined_df = combined_df.sort_values('bjd').reset_index(drop=True)
         
-        # Apply phase folding if needed
         if period:
             bjd_or_phase = calculate_phase(combined_df['bjd'].values, period, epoch)
             xlabel = "Phase"
+            if TESS_plot:
+                plot_TESS_lc(args.gaia_id, period, epoch)
         else:
             bjd_or_phase = combined_df['bjd'].values - 2450000
             xlabel = "BJD - 2450000"
         
-        # Apply binning if specified
         if binning_method:
             x_plot, mag_epd, mag_magfit = apply_binning(
                 combined_df, bjd_or_phase, binning_method, binning_size
@@ -346,36 +372,38 @@ def main():
             mag_epd = combined_df['mag_epd'].values
             mag_magfit = combined_df['mag_magfit'].values
         
-        plot_light_curve(
+        plot_lc(
             x_plot, mag_epd, mag_magfit,
-            sep_by, mode,
+            TESS_plot, sep_by, mode,
             object_name, 'folded',
-            xlabel=xlabel, period=period, photref_dict=photref_dict
+            xlabel=xlabel, photref_dict=photref_dict
         )
     elif mode == 'single':
-        # Original logic for individual or combined without binning
         for chn_or_phref in sorted(data.keys()):
             df = data[chn_or_phref]
-            x_values = df['bjd'].values
-            mag_epd = df['mag_epd'].values
-            mag_magfit = df['mag_magfit'].values
             
             if period:
-                phase = calculate_phase(x_values, period, epoch)
-                x_plot = phase
+                bjd_or_phase = calculate_phase(df['bjd'].values, period, epoch)
                 xlabel = "Phase"
+                if TESS_plot:
+                    plot_TESS_lc(args.gaia_id, period, epoch)
             else:
-                x_plot = x_values - 2450000
+                bjd_or_phase = df['bjd'].values - 2450000
                 xlabel = "BJD - 2450000"
             
             if binning_method:
-                x_plot, mag_epd, mag_magfit = apply_binning(df, x_plot, binning_method, binning_size)
+                x_plot, mag_epd, mag_magfit = apply_binning(
+                    df, bjd_or_phase, binning_method, binning_size)
+            else:
+                x_plot = bjd_or_phase
+                mag_epd = df['mag_epd'].values
+                mag_magfit = df['mag_magfit'].values
             
-            plot_light_curve(
+            plot_lc(
                 x_plot, mag_epd, mag_magfit,
-                sep_by, mode,
+                TESS_plot, sep_by, mode,
                 object_name, chn_or_phref,
-                xlabel=xlabel, period=period, photref_dict=photref_dict
+                xlabel=xlabel, photref_dict=photref_dict
                 )
                 
     if mode == 'folded':
