@@ -26,7 +26,9 @@
 """
 
 #TODO:
-# last part of the title in the photref case is kinda hardcoded
+# 1. last part of the title in the photref case is kinda hardcoded
+# 2. folded mode with binning is fine, but without binning, but if
+# binning is not applied, the folded plot is not correct.
 
 import h5py
 import numpy as np
@@ -303,44 +305,49 @@ def main():
             photref_dict = {k: v for k, v in photref_dict.items() if k in selected}
 
     # If combined plot type with binning, merge all dataframes first
-    if mode == 'folded' and binning_method:
-        all_bjds = []
-        all_mag_epd = []
-        all_mag_magfit = []
+    if mode == 'folded':
+        all_bjds_list_of_lists = []
+        all_mag_epd_list_of_lists = []
+        all_mag_magfit_list_of_lists = []
         
         for chn_or_phref in sorted(data.keys()):
             df = data[chn_or_phref]
-            all_bjds.append(df['bjd'].values)  # combination of separate arrays
-            all_mag_epd.append(df['mag_epd'].values)
-            all_mag_magfit.append(df['mag_magfit'].values)
+            all_bjds_list_of_lists.append(df['bjd'].values)  # combination of separate arrays
+            all_mag_epd_list_of_lists.append(df['mag_epd'].values)
+            all_mag_magfit_list_of_lists.append(df['mag_magfit'].values)
         
-        x_values = np.concatenate(all_bjds)  # make one big array of bjd values
-        mag_epd = np.concatenate(all_mag_epd)
-        mag_magfit = np.concatenate(all_mag_magfit)
+        all_bjds = np.concatenate(all_bjds_list_of_lists)  # make one big array of bjd values
+        all_mag_epd = np.concatenate(all_mag_epd_list_of_lists)
+        all_mag_magfit = np.concatenate(all_mag_magfit_list_of_lists)
         
         # Create combined DataFrame with all columns and sort by bjd
         combined_df = pd.DataFrame({
-            'bjd': x_values,
-            'mag_epd': mag_epd,
-            'mag_magfit': mag_magfit
+            'bjd': all_bjds,
+            'mag_epd': all_mag_epd,
+            'mag_magfit': all_mag_magfit
         })
         combined_df = combined_df.sort_values('bjd').reset_index(drop=True)
         
         # Apply phase folding if needed
         if period:
-            x_plot = calculate_phase(combined_df['bjd'].values, period, epoch)
+            bjd_or_phase = calculate_phase(combined_df['bjd'].values, period, epoch)
             xlabel = "Phase"
         else:
-            x_plot = x_values - 2450000
+            bjd_or_phase = combined_df['bjd'].values - 2450000
             xlabel = "BJD - 2450000"
         
-        # Apply binning
-        x_plot, mag_epd_binned, mag_magfit_binned = apply_binning(
-            combined_df, x_plot, binning_method, binning_size
-        )
+        # Apply binning if specified
+        if binning_method:
+            x_plot, mag_epd, mag_magfit = apply_binning(
+                combined_df, bjd_or_phase, binning_method, binning_size
+            )
+        else:
+            x_plot = bjd_or_phase
+            mag_epd = combined_df['mag_epd'].values
+            mag_magfit = combined_df['mag_magfit'].values
         
         plot_light_curve(
-            x_plot, mag_epd_binned, mag_magfit_binned,
+            x_plot, mag_epd, mag_magfit,
             sep_by, mode,
             object_name, 'folded',
             xlabel=xlabel, period=period, photref_dict=photref_dict
@@ -352,30 +359,31 @@ def main():
             x_values = df['bjd'].values
             mag_epd = df['mag_epd'].values
             mag_magfit = df['mag_magfit'].values
+            
             if period:
                 phase = calculate_phase(x_values, period, epoch)
-                plot_light_curve(
-                    phase, mag_epd, mag_magfit,
-                    sep_by, mode,
-                    object_name, chn_or_phref,
-                    xlabel="Phase", period=period, photref_dict=photref_dict
-                    )
+                x_plot = phase
+                xlabel = "Phase"
             else:
-                # Plot regular light curve
-                bjd = x_values - 2450000
-                plot_light_curve(
-                    bjd, mag_epd, mag_magfit,
-                    sep_by, mode,
-                    object_name, chn_or_phref,
-                    xlabel="BJD - 2450000", photref_dict=photref_dict
-                    )
+                x_plot = x_values - 2450000
+                xlabel = "BJD - 2450000"
+            
+            if binning_method:
+                x_plot, mag_epd, mag_magfit = apply_binning(df, x_plot, binning_method, binning_size)
+            
+            plot_light_curve(
+                x_plot, mag_epd, mag_magfit,
+                sep_by, mode,
+                object_name, chn_or_phref,
+                xlabel=xlabel, period=period, photref_dict=photref_dict
+                )
                 
     if mode == 'folded':
         plt.title(
             f'{object_name} - separated by: {sep_by}',
             fontdict={"fontweight":"bold", 'fontsize':12}
             )
-        plt.ylim(0.3, -0.1)
+        plt.ylim(0.7, -0.5)
         plt.savefig(f'{object_name}_separated_by_{sep_by}_folded', dpi=400)
         plt.show()
 
