@@ -43,7 +43,7 @@ def parse_arguments():
         description="Plot Light Curve from HDF5 file"
         )
     parser.add_argument(
-        "hdf5_file",
+        "lc_file",
         type=str,
         help="Path to the HDF5 file containing the light curve data"
         )
@@ -64,6 +64,12 @@ def parse_arguments():
         type=float,
         default=None,
         help="Reference epoch (t0) for phase folding"
+    )
+    parser.add_argument(
+        "--tmag",
+        type=float,
+        default=None,
+        help="TESS magnitude of the star (only for TESS plot annotation)"
     )
     parser.add_argument(
         "--sep-by",
@@ -101,6 +107,12 @@ def parse_arguments():
         default=False,
         action='store_true',
         help="Plot TESS light curve for the same object on top of the PANOPTES data"
+    )
+    parser.add_argument(
+        "--save-plot",
+        default=False,
+        action='store_true',
+        help="Save the plot as a PNG file"
     )
 
     return parser.parse_args()
@@ -261,36 +273,41 @@ def calculate_phase(bjd, period, epoch):
     phase = ((bjd - epoch) / period) % 1.0
     return phase
 
-def plot_TESS_lc(gaia_id, period, epoch):
+def plot_TESS_lc(gaia_id, period, epoch, tmag=None):
     """
     Plot TESS light curve for the given Gaia ID, period, and epoch.
+    Should we download all data or the first as now is enough?
     """
+    gaia_id = 'Gaia DR3 ' + gaia_id
     search = lk.search_lightcurve(gaia_id, mission="TESS")
-    print(search)
+    # print(search)
 
     lc = search.download()
     lc = lc.remove_nans().normalize()
     lc = lc.flatten(window_length=401)
-    
-    time_tess = lc.time.value
+
+    time_tess = lc.time.value + 2457000
+    # print(time_tess)
+    # print(lc.time.jd)
+    # print(lc.time.utc.iso)
+    # print(lc.time.tdb.iso)
+    # print(type(lc.time.format))
     phase = ((time_tess - epoch) / period) % 1
     flux_tess = lc.flux.value
     mag_tess = -2.5 * np.log10(flux_tess)
 
     plt.scatter(phase, mag_tess, s=1, color='green', alpha=0.7, label="TESS")
+    plt.text(
+        0.95, 0.04,
+        f'TESS Mag: {tmag}', transform=plt.gca().transAxes,
+        fontsize=10, ha='right', va='bottom'
+        )
 
-
-def plot_lc(bjd, mag_epd, mag_magfit,
-                     TESS_plot, sep_by, mode,
-                     object_name, chn_or_phref,
-                     xlabel, photref_dict=None
-                    ):
+def plot_lc(bjd, mag_epd, mag_magfit,xlabel):
     """
     Plot light curve.
     """
     # plt.figure(figsize=(10, 5))
-    if TESS_plot:
-        pass
     plt.scatter(bjd, mag_magfit, s=10, color='blue', alpha=0.5, label='MagFit')
     plt.scatter(bjd, mag_epd, s=10, color='red', alpha=0.5, label='EPD')
 
@@ -302,30 +319,30 @@ def plot_lc(bjd, mag_epd, mag_magfit,
     plt.grid(True)
     # plt.legend()
     # plt.savefig(f'{object_name}_Chn_or_photref_{chn_or_phref}',dpi=400)
-    if mode == 'single':
-        if photref_dict and chn_or_phref in photref_dict:
-            title_part = f"{chn_or_phref}: {photref_dict[chn_or_phref]}"
-        else:
-            title_part = chn_or_phref
-        plt.title(f'{object_name} - {sep_by}: {title_part}', fontdict={"fontweight":"bold", 'fontsize':12})
-        plt.show()
+    # if mode == 'single':
+    #     if photref_dict and chn_or_phref in photref_dict:
+    #         title_part = f"{chn_or_phref}: {photref_dict[chn_or_phref]}"
+    #     else:
+    #         title_part = chn_or_phref
+    #     plt.title(f'{object_name} - {sep_by}: {title_part}', fontdict={"fontweight":"bold", 'fontsize':12})
+    #     plt.show()
 
 def main():
 
     args = parse_arguments()
-    hdf5_file = args.hdf5_file
-    gaia_id = hdf5_file.split('/')[-1].split('.')[0].split('_')[1]
-    object_name = hdf5_file.split('/')[-1].split('.')[0]
+    lc_file = args.lc_file
+    gaia_id = lc_file.split('/')[-1].split('.')[0].split('_')[1]
     aperture = args.aperture
     period = args.period
     epoch = args.epoch
+    tmag = args.tmag
     sep_by = args.sep_by
     mode = args.mode
     TESS_plot = args.TESS_plot
     binning_method = args.binning[0] if args.binning else None
     binning_size = float(args.binning[1]) if args.binning else None
 
-    data, photref_dict = read_lc(hdf5_file, aperture, sep_by)
+    data, photref_dict = read_lc(lc_file, aperture, sep_by)
 
     if args.selected:
         selected = args.selected
@@ -353,12 +370,12 @@ def main():
             'mag_epd': all_mag_epd,
             'mag_magfit': all_mag_magfit
         })
-        
+
         if period:
             bjd_or_phase = calculate_phase(combined_df['bjd'].values, period, epoch)
             xlabel = "Phase"
             if TESS_plot:
-                plot_TESS_lc(args.gaia_id, period, epoch)
+                plot_TESS_lc(gaia_id, period, epoch, tmag)
         else:
             bjd_or_phase = combined_df['bjd'].values - 2450000
             xlabel = "BJD - 2450000"
@@ -372,12 +389,17 @@ def main():
             mag_epd = combined_df['mag_epd'].values
             mag_magfit = combined_df['mag_magfit'].values
         
-        plot_lc(
-            x_plot, mag_epd, mag_magfit,
-            TESS_plot, sep_by, mode,
-            object_name, 'folded',
-            xlabel=xlabel, photref_dict=photref_dict
-        )
+        plot_lc(x_plot, mag_epd, mag_magfit, xlabel)
+        plt.title(
+            f'Gaia {gaia_id} - separated by: {sep_by}',
+            fontdict={"fontweight":"bold", 'fontsize':12}
+            )
+        plt.ylim(0.7, -0.5)
+        if args.save_plot:
+            plt.savefig(f'Gaia_{gaia_id}_sepby_{sep_by}_folded_aperture_{aperture}', dpi=400)
+        plt.show()
+
+
     elif mode == 'single':
         for chn_or_phref in sorted(data.keys()):
             df = data[chn_or_phref]
@@ -386,7 +408,7 @@ def main():
                 bjd_or_phase = calculate_phase(df['bjd'].values, period, epoch)
                 xlabel = "Phase"
                 if TESS_plot:
-                    plot_TESS_lc(args.gaia_id, period, epoch)
+                    plot_TESS_lc(gaia_id, period, epoch, tmag)
             else:
                 bjd_or_phase = df['bjd'].values - 2450000
                 xlabel = "BJD - 2450000"
@@ -399,22 +421,15 @@ def main():
                 mag_epd = df['mag_epd'].values
                 mag_magfit = df['mag_magfit'].values
             
-            plot_lc(
-                x_plot, mag_epd, mag_magfit,
-                TESS_plot, sep_by, mode,
-                object_name, chn_or_phref,
-                xlabel=xlabel, photref_dict=photref_dict
-                )
-                
-    if mode == 'folded':
-        plt.title(
-            f'{object_name} - separated by: {sep_by}',
-            fontdict={"fontweight":"bold", 'fontsize':12}
-            )
-        plt.ylim(0.7, -0.5)
-        plt.savefig(f'{object_name}_separated_by_{sep_by}_folded', dpi=400)
-        plt.show()
-
+            plot_lc(x_plot, mag_epd, mag_magfit,xlabel)
+            if photref_dict and chn_or_phref in photref_dict:
+                title_part = f"{chn_or_phref}) {photref_dict[chn_or_phref]}"
+            else:
+                title_part = chn_or_phref
+            plt.title(f'{gaia_id} - {sep_by}: {title_part}', fontdict={"fontweight":"bold", 'fontsize':12})
+            if args.save_plot:
+                plt.savefig(f'Gaia_{gaia_id}_sepby_{sep_by}_{title_part}_aperture_{aperture}', dpi=400)
+            plt.show()
 
 if __name__ == "__main__":
     main()
