@@ -36,6 +36,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import lightkurve as lk
 from argparse import ArgumentParser
+from astroquery.gaia import Gaia
 
 def parse_arguments():
     
@@ -66,10 +67,10 @@ def parse_arguments():
         help="Reference epoch (t0) for phase folding"
     )
     parser.add_argument(
-        "--tmag",
-        type=float,
+        "--text",
+        type=str,
         default=None,
-        help="TESS magnitude of the star (only for TESS plot annotation)"
+        help="Printed text in the plot"
     )
     parser.add_argument(
         "--sep-by",
@@ -109,10 +110,16 @@ def parse_arguments():
         help="Plot TESS light curve for the same object on top of the PANOPTES data"
     )
     parser.add_argument(
-        "--save-plot",
+        "--GAIA-plot",
         default=False,
         action='store_true',
-        help="Save the plot as a PNG file"
+        help="Plot GAIA light curve for the same object on top of the PANOPTES data"
+    )
+    parser.add_argument(
+        "--save-or-show-plot",
+        default='show',
+        choices=['save', 'show'],
+        help="Whether to save the plot as a PNG file or display it (default: 'show')"
     )
 
     return parser.parse_args()
@@ -273,16 +280,25 @@ def calculate_phase(bjd, period, epoch):
     phase = ((bjd - epoch) / period) % 1.0
     return phase
 
-def plot_TESS_lc(gaia_id, period, epoch, tmag=None):
+def plot_TESS_lc(gaia_id, period, epoch, text=None):
     """
     Plot TESS light curve for the given Gaia ID, period, and epoch.
-    Should we download all data or the first as now is enough?
+    Downloads the most recent SPOC light curve.
     """
     gaia_id = 'Gaia DR3 ' + gaia_id
-    search = lk.search_lightcurve(gaia_id, mission="TESS")
-    # print(search)
-
-    lc = search.download()
+    search = lk.search_lightcurve(gaia_id, mission="TESS", author="SPOC")
+    if search is None or len(search) == 0:
+        print(f"No TESS SPOC data found for {gaia_id}, trying any TESS data...")
+        search = lk.search_lightcurve(gaia_id, mission="TESS")
+        if search is None or len(search) == 0:
+            print(f"No TESS data found for {gaia_id}. Skipping TESS plot.")
+            return
+    else:
+        print(search)
+    # Sort by t_min descending to get the most recent
+    search = search[np.argsort(search.table['t_min'])[::-1]]
+    print(f"Downloading most recent SPOC LC: {search[0]}")
+    lc = search[0].download()
     lc = lc.remove_nans().normalize()
     lc = lc.flatten(window_length=401)
 
@@ -296,28 +312,50 @@ def plot_TESS_lc(gaia_id, period, epoch, tmag=None):
     flux_tess = lc.flux.value
     mag_tess = -2.5 * np.log10(flux_tess)
 
-    plt.scatter(phase, mag_tess, s=1, color='green', alpha=0.7, label="TESS")
+    plt.scatter(phase, mag_tess, s=1, color='green', alpha=0.7, label="TESS", zorder=2)
     plt.text(
         0.95, 0.04,
-        f'TESS Mag: {tmag}', transform=plt.gca().transAxes,
+        f'TESS Mag: {text}', transform=plt.gca().transAxes,
         fontsize=10, ha='right', va='bottom'
         )
 
-def plot_lc(bjd, mag_epd, mag_magfit,xlabel):
+def plot_Gaia_lc(gaia_id, period, epoch, text=None):
+    datalink = Gaia.load_data(
+        ids=gaia_id,
+        data_release="Gaia DR3",
+        retrieval_type="EPOCH_PHOTOMETRY",
+        format="votable"
+    )
+    table = datalink[f'EPOCH_PHOTOMETRY-Gaia DR3 {gaia_id}.xml'][0].to_table().to_pandas()
+
+    t_gaia_bjd = np.array(table['g_transit_time']) + 2455197.5
+    mag = np.array(table['g_transit_mag'])
+    mask = np.isfinite(t_gaia_bjd) & np.isfinite(mag)
+    t_gaia_bjd, mag = t_gaia_bjd[mask], mag[mask]
+
+    mag = mag - np.mean(mag)
+    phase = ((t_gaia_bjd - epoch) / period) % 1
+    plt.scatter(phase, mag, s=70, marker='x', c='r', label="GAIA", zorder=2)
+    plt.text(
+        0.95, 0.04,
+        f'{text}', transform=plt.gca().transAxes,
+        fontsize=10, ha='right', va='bottom'
+        )
+
+def plot_lc(bjd, mag_epd, mag_magfit, xlabel):
     """
     Plot light curve.
     """
     # plt.figure(figsize=(10, 5))
-    plt.scatter(bjd, mag_magfit, s=10, color='blue', alpha=0.5, label='MagFit')
-    plt.scatter(bjd, mag_epd, s=10, color='red', alpha=0.5, label='EPD')
+    plt.scatter(bjd, mag_magfit, s=10, color='red', alpha=0.5, label='MagFit', zorder=1)
+    plt.scatter(bjd, mag_epd, s=10, color='blue', alpha=0.5, label='EPD', zorder=1)
 
     plt.gca().invert_yaxis()  # Magnitude axis is inverted
     plt.xlabel(xlabel, fontdict={"fontweight":"bold", 'fontsize':14})
     plt.ylabel("Magnitude", fontdict={"fontweight":"bold", 'fontsize':14})
-    plt.ylim(0.7, -0.5)
-    # plt.xlim(9900, 9907)
+    # plt.ylim(0.7, -0.5)
     plt.grid(True)
-    # plt.legend()
+    plt.legend()
     # plt.savefig(f'{object_name}_Chn_or_photref_{chn_or_phref}',dpi=400)
     # if mode == 'single':
     #     if photref_dict and chn_or_phref in photref_dict:
@@ -327,6 +365,18 @@ def plot_lc(bjd, mag_epd, mag_magfit,xlabel):
     #     plt.title(f'{object_name} - {sep_by}: {title_part}', fontdict={"fontweight":"bold", 'fontsize':12})
     #     plt.show()
 
+    # Set ylim based on IQR
+    all_mags = np.concatenate([mag_epd, mag_magfit])
+    valid = ~np.isnan(all_mags)
+    if valid.any():
+        q1, q3 = np.percentile(all_mags[valid], [25, 75])
+        iqr = q3 - q1
+        lower = q1 - 3 * iqr
+        upper = q3 + 5 * iqr
+        plt.ylim(upper, lower)
+    else:
+        plt.ylim(0.7, -0.5)  # fallback
+
 def main():
 
     args = parse_arguments()
@@ -335,12 +385,14 @@ def main():
     aperture = args.aperture
     period = args.period
     epoch = args.epoch
-    tmag = args.tmag
+    text = args.text
     sep_by = args.sep_by
     mode = args.mode
     TESS_plot = args.TESS_plot
+    GAIA_plot = args.GAIA_plot
     binning_method = args.binning[0] if args.binning else None
     binning_size = float(args.binning[1]) if args.binning else None
+    save_or_show = args.save_or_show_plot
 
     data, photref_dict = read_lc(lc_file, aperture, sep_by)
 
@@ -375,7 +427,9 @@ def main():
             bjd_or_phase = calculate_phase(combined_df['bjd'].values, period, epoch)
             xlabel = "Phase"
             if TESS_plot:
-                plot_TESS_lc(gaia_id, period, epoch, tmag)
+                plot_TESS_lc(gaia_id, period, epoch, text)
+            elif GAIA_plot:
+                plot_Gaia_lc(gaia_id, period, epoch, text)
         else:
             bjd_or_phase = combined_df['bjd'].values - 2450000
             xlabel = "BJD - 2450000"
@@ -394,11 +448,11 @@ def main():
             f'Gaia {gaia_id} - separated by: {sep_by}',
             fontdict={"fontweight":"bold", 'fontsize':12}
             )
-        plt.ylim(0.7, -0.5)
-        if args.save_plot:
+        # plt.ylim(0.7, -0.5)
+        if save_or_show == 'save':
             plt.savefig(f'Gaia_{gaia_id}_sepby_{sep_by}_folded_aperture_{aperture}', dpi=400)
-        plt.show()
-
+        elif save_or_show == 'show':
+            plt.show()
 
     elif mode == 'single':
         for chn_or_phref in sorted(data.keys()):
@@ -408,7 +462,9 @@ def main():
                 bjd_or_phase = calculate_phase(df['bjd'].values, period, epoch)
                 xlabel = "Phase"
                 if TESS_plot:
-                    plot_TESS_lc(gaia_id, period, epoch, tmag)
+                    plot_TESS_lc(gaia_id, period, epoch, text)
+                elif GAIA_plot:
+                    plot_Gaia_lc(gaia_id, period, epoch, text)
             else:
                 bjd_or_phase = df['bjd'].values - 2450000
                 xlabel = "BJD - 2450000"
@@ -427,9 +483,10 @@ def main():
             else:
                 title_part = chn_or_phref
             plt.title(f'{gaia_id} - {sep_by}: {title_part}', fontdict={"fontweight":"bold", 'fontsize':12})
-            if args.save_plot:
+            if save_or_show == 'save':
                 plt.savefig(f'Gaia_{gaia_id}_sepby_{sep_by}_{title_part}_aperture_{aperture}', dpi=400)
-            plt.show()
+            elif save_or_show == 'show':
+                plt.show()
 
 if __name__ == "__main__":
     main()
