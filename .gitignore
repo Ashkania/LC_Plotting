@@ -1,5 +1,5 @@
 Inputs/
 Results/
 bkp/
+scripts/diagnostics/*.reg
 .gitignore
-
