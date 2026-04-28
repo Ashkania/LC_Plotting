@@ -1,0 +1,25 @@
+python ~/ASHKAN/Projects/LC_Plotting/scripts/plotting.py ~/ASHKAN/Projects/LC_Plotting/Inputs/LC/EB_Villa/EPD_all_channels/GDR3_3337025761759515776.h5 --aperture 0 --period 1.7801492 --epoch 1469.56553 --sep-by 'photref' --mode 'folded' --binning 'time' 4 --TESS-plot --tmag 9.57
+
+python ~/ASHKAN/Projects/LC_Plotting/scripts/plotting.py ~/ASHKAN/Projects/LC_Plotting/Inputs/LC/EB_Villa/EPD_all_channels/GDR3_3236063347058245248.h5 --aperture 4 --period 3.8729188 --epoch 1471.728126 --sep-by 'photref' --mode 'folded' --binning 'time' 4 --TESS-plot --tmag 10.77
+
+python ~/ASHKAN/Projects/LC_Plotting/scripts/plotting.py ~/ASHKAN/Projects/LC_Plotting/Inputs/LC/EB_Villa/EPD_all_channels/GDR3_3234434046920438656.h5 --aperture 2 --period 0.6327929 --epoch 1438.594888 --sep-by 'photref' --mode 'folded' --binning 'time' 5 --TESS-plot --tmag 11.32
+
+python ~/ASHKAN/Projects/LC_Plotting/scripts/plotting.py ~/ASHKAN/Projects/LC_Plotting/Inputs/LC/EB_10k/EPD_all_channels/GDR3_3345055396396511744.h5 --aperture 7 --period 1.002628 --epoch  3672.3996 --sep-by 'photref' --mode 'folded' --binning 'time' 4 --TESS-plot --tmag 9.14
+
+python ~/ASHKAN/Projects/LC_Plotting/scripts/plotting.py ~/ASHKAN/Projects/LC_Plotting/Inputs/LC/GAIA_variables/GDR3_3329849043206545920.h5 --aperture 0 --period 8.618491368545602 --epoch 1699.3011509416267  --sep-by 'photref' --mode 'folded' --binning 'time' 1 --TESS-plot --tmag 8.66-Cepheid
+
+
+
+
+
+for ap in {0..7}; do python ~/ASHKAN/Projects/LC_Plotting/scripts/plotting.py ~/ASHKAN/Projects/LC_Plotting/Inputs/LC/GAIA_variables/GDR3_3345254098763568768.h5 --aperture $ap  --sep-by 'photref' --mode 'folded' --period 4.838006833642595 --epoch 1702.9923294971609  --GAIA-plot --binning time 1 --text mag:9.53-Cepheid-pp_g=0.21,pp_bp=0.27,pp_rp=0.18 --save-or-show-plot save; done
+
+for ap in {0..7}; do python ~/ASHKAN/Projects/LC_Plotting/scripts/plotting.py ~/ASHKAN/Projects/LC_Plotting/Inputs/LC/GAIA_variables/GDR3_3339415417140734208.h5 --aperture $ap  --sep-by 'photref' --mode 'folded' --period 4.231978388684421 --epoch 1706.1346046913877  --GAIA-plot --binning time 1 --text mag:10.57-Cepheid-pp_g=0.48,pp_bp=0.63,pp_rp=0.39 --save-or-show-plot save; done
+
+for ap in {0..7}; do python ~/ASHKAN/Projects/LC_Plotting/scripts/plotting.py ~/ASHKAN/Projects/LC_Plotting/Inputs/LC/GAIA_variables/GDR3_3368698813404804352.h5 --aperture $ap  --sep-by 'photref' --mode 'folded' --period 7.56694930079696 --epoch 1698.10136963453  --GAIA-plot --binning time 1 --text mag:8.19-Cepheid-pp_g=0...,pp_bp=...,pp_rp=... --save-or-show-plot save; done
+
+for ap in {0..7}; do python ~/ASHKAN/Projects/LC_Plotting/scripts/plotting.py ~/ASHKAN/Projects/LC_Plotting/Inputs/LC/GAIA_variables/GDR3_3329849043206545920.h5 --aperture $ap  --sep-by 'photref' --mode 'folded' --period 8.618491368545602 --epoch 1699.3011509416267 --GAIA-plot --binning time 1 --text 8.66-Cepheid-pp_g=0.5,pp_bp=...,pp_rp=... --save-or-show-plot save; done
+
+
+
+python ~/ASHKAN/Projects/LC_Plotting/scripts/plotting.py ~/ASHKAN/Projects/LC_Plotting/Inputs/LC/EB_Villa/EPD_all_channels/GDR3_3236198793146848256.h5 --aperture 2 --period 4.5552015 --epoch 1473.083787 --sep-by 'photref' --mode 'folded' --binning 'time' 5 --TESS-plot --tmag 5.15

@@ -1,0 +1,83 @@
+            SELECT
+            gs.source_id, gs.ra, gs.dec, gs.phot_g_mean_mag AS magnitude, vc.best_class_name
+            FROM gaiadr3.gaia_source gs
+            JOIN gaiadr3.vari_classifier_result AS vc
+            ON gs.source_id = vc.source_id
+            WHERE
+                RA BETWEEN 66.6 AND 120.0 AND Dec BETWEEN -5.1 AND 28.4
+                AND
+                phot_g_mean_mag < 11.0
+AND vc.best_class_name IN (
+            'DSCT', 'HADS',
+            'RRAB', 'RRC', 'RRD',
+            'CEP', 'T2CEP',
+            'MIRA', 'SR',
+            'EA', 'EB', 'EW',
+            'RS', 'BYDRA', 'ACV'
+        )
+                AND
+                1 = CONTAINS(
+                    POINT(
+                        ra,
+                        dec
+                    ),
+                    POLYGON(
+                        67.11283293880099,
+                        0.3687362588018095,
+                        86.6870778802992,
+                        27.324969699706774,
+                        106.49476026208721,
+                        27.324969699706774,
+                        106.06900520358542,
+                        0.3687362588018095
+                    )
+                )
+        
+                ORDER BY
+                    magnitude
+                    ASC
+                    
+                    
+                    
+SELECT
+	gs.source_id, gs.ra, gs.dec, gs.phot_g_mean_mag AS magnitude,
+	vc.best_class_name,
+	cep.epoch_g, cep.peak_to_peak_g, cep.pf
+FROM
+	gaiadr3.gaia_source AS gs
+JOIN
+	gaiadr3.vari_classifier_result AS vc
+ON
+	gs.source_id = vc.source_id
+JOIN gaiadr3.vari_cepheid AS cep
+ON 
+	vc.source_id = cep.source_id
+WHERE
+	RA BETWEEN 66.6 AND 120.0 AND Dec BETWEEN -5.1 AND 28.4
+	AND
+	phot_g_mean_mag < 11.0
+AND vc.best_class_name IN (
+            'CEP', 'T2CEP'
+        )
+
+                AND
+                1 = CONTAINS(
+                    POINT(
+                        ra,
+                        dec
+                    ),
+                    POLYGON(
+                        67.11283293880099,
+                        0.3687362588018095,
+                        86.6870778802992,
+                        27.324969699706774,
+                        106.49476026208721,
+                        27.324969699706774,
+                        106.06900520358542,
+                        0.3687362588018095
+                    )
+                )
+        
+                ORDER BY
+                    magnitude
+                    ASC
