@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
-# TODO: Given a Gaia id, go over all the DR files, extract the x,y
-# of that source, and compare the number of points we find with 
-# what we have in the LC
+# Given a Gaia id and the path to DR files, it goes over all the
+# DR files, extract the x,y, fitted mag (it1) of that Gaia id,
+# and report the number of points we find, which means in how many
+# dr files this object appears.
+
 # ex of cmdline usage:
 # for tel in *; do for cam in $tel/*; do echo "$cam";
 # /home/sxj190009/LC_Plotting/scripts/diagnostics/DR_vs_LC.py
