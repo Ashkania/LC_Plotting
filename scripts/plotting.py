@@ -487,6 +487,7 @@ def main():
                 plt.savefig(f'Gaia_{gaia_id}_sepby_{sep_by}_{title_part}_aperture_{aperture}', dpi=400)
             elif save_or_show == 'show':
                 plt.show()
+            plt.clf()
 
 if __name__ == "__main__":
     main()
