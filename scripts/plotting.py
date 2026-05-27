@@ -37,6 +37,7 @@ import matplotlib.pyplot as plt
 import lightkurve as lk
 from argparse import ArgumentParser
 from astroquery.gaia import Gaia
+import sys
 
 def parse_arguments():
     
@@ -47,6 +48,12 @@ def parse_arguments():
         "lc_file",
         type=str,
         help="Path to the light curve HDF5 file"
+        )
+    parser.add_argument(
+        "--mag-types",
+        nargs='+',
+        default=['magfit'],
+        help="Which magnitude type to plot (magfit, epd, or tfa or multiple)"
         )
     parser.add_argument(
         "--aperture",
@@ -121,16 +128,16 @@ def parse_arguments():
         choices=['save', 'show'],
         help="Whether to save the plot as a PNG file or display it (default: 'show')"
     )
-    parser.add_argument(
-        "--folded-color",
-        default=False,
-        action='store_true',
-        help="When used with --mode folded, plot each photref/channel in a separate color on the same folded figure"
-    )
+    # parser.add_argument(
+    #     "--folded-color",
+    #     default=False,
+    #     action='store_true',
+    #     help="When used with --mode folded, plot each photref/channel in a separate color on the same folded figure"
+    # )
 
     return parser.parse_args()
 
-def read_lc(hdf5_file, aperture=4, sep_by='photref'):
+def read_lc(hdf5_file, aperture=4, sep_by='photref', mag_types=['magfit']):
     """
     Read light curve data from HDF5 file and organize it by channel or photref.
      Parameters:
@@ -151,34 +158,45 @@ def read_lc(hdf5_file, aperture=4, sep_by='photref'):
         Dictionary mapping photref index to processed name
     """
 
+    MAG_CONFIG = {
+        'magfit': ('MagnitudeFitting/Magnitude', 'mag_magfit'),
+        'epd':    ('EPD/Magnitude',              'mag_epd'),
+        'tfa':    ('TFA/Magnitude',              'mag_tfa'),
+    }
+
     with h5py.File(hdf5_file, 'r') as f:
         channels = f[f'FrameInformation/ConfigurationIndex'][:]
         photrefs = f[f'AperturePhotometry/Aperture004/MagnitudeFitting/ConfigurationIndex'][:]
 
         channel_photref_mapping = {
-            ch: np.unique(photrefs[channels == ch]) for ch in np.unique(channels)
+            ch: np.unique(photrefs[channels == ch])
+            for ch in np.unique(channels)
         }
         
         bjds = f[f'SkyPosition/BJD'][:]
         
-        mag_magfit = f[f'AperturePhotometry/Aperture{aperture:03}/MagnitudeFitting/Magnitude'][:]
-        mag_epd = f[f'AperturePhotometry/Aperture{aperture:03}/EPD/Magnitude'][:]
+        mag_arrays = {}
+        for mag in mag_types:
+            hdf5_subpath, col_name = MAG_CONFIG[mag]
+            try:
+                arr = f[f'AperturePhotometry/Aperture{aperture:03}/{hdf5_subpath}'][:]
+                arr[arr < -1e5] = np.nan
+                mag_arrays[col_name] = arr
+            except KeyError:
+                print(f"KeyError: {hdf5_subpath} not found in {hdf5_file}")
+                sys.exit(1)
 
-        mag_epd[mag_epd < -1e5] = np.nan
-        mag_magfit[mag_magfit < -1e5] = np.nan
-        
         data = {}
-        photref_dict = {}
 
         for phref in np.unique(photrefs):
             mask = photrefs == phref
-            med_epd = np.nanmedian(mag_epd[mask])
-            med_magfit = np.nanmedian(mag_magfit[mask])
-            data[phref] = pd.DataFrame({
-                'bjd': bjds[mask],
-                'mag_epd': mag_epd[mask] - med_epd,
-                'mag_magfit': mag_magfit[mask] - med_magfit
-            })
+            df_data = {'bjd': bjds[mask]}
+            for col_name, arr in mag_arrays.items():
+                df_data[col_name] = arr[mask] - np.nanmedian(arr[mask])
+            data[phref] = pd.DataFrame(df_data)
+
+        # --- Regroup if needed ---
+        photref_dict = None
 
         if sep_by == 'channel':
             data = {
@@ -188,6 +206,7 @@ def read_lc(hdf5_file, aperture=4, sep_by='photref'):
 
         elif sep_by == 'photref':
             photrefsnames = f[f'AperturePhotometry/Aperture000/MagnitudeFitting/Configuration/SinglePhotometricReference'][:]
+            photref_dict = {}
             for i, name in enumerate(photrefsnames):
                 name = name.decode('utf-8')
                 part1 = name[name.find('DR')+3:name.find('DR')+7]
@@ -196,10 +215,10 @@ def read_lc(hdf5_file, aperture=4, sep_by='photref'):
                 part2 = name[second_pan - 3:second_pan - 1]
                 part3 = name[-5:-3]
                 photref_dict[i] = f"{part1}_{part2}_{part3}"
-
+                
     return data, photref_dict
 
-def apply_binning(df, x_values, method, bin_size):
+def apply_binning(df, x_values, method, bin_size):   ############# edit with new mag_cols #############
     """
     Apply binning to light curve data.
     
@@ -243,7 +262,7 @@ def apply_binning(df, x_values, method, bin_size):
         'mag_magfit': 'median'
     }).dropna()
     
-    return binned['x'].values, binned['mag_epd'].values, binned['mag_magfit'].values
+    return binned['x'].values, binned['mag_epd'].values, binned['mag_magfit'].values ####################3 edit #######################################
 
 def calculate_phase(bjd, period, epoch):
     """
@@ -328,49 +347,46 @@ def plot_Gaia_lc(gaia_id, period, epoch, text=None):
         f'{text}', transform=plt.gca().transAxes,
         fontsize=10, ha='right', va='bottom'
         )
-
-def plot_lc(bjd, mag_epd, mag_magfit, xlabel, color=None, label=None, label_magfit_only=False):
+def plot_lc(X, *mag_arrays, mag_cols, xlabel):
     """
     Plot light curve.
+
+    Parameters:
+    -----------
+    X : array
+        Time or phase axis values
+    mag_arrays : arrays
+        Magnitude arrays, one per entry in mag_cols
+    mag_cols : list of str
+        Column names corresponding to mag_arrays (e.g. ['mag_magfit', 'mag_epd'])
+    xlabel : str
+        X-axis label
     """
-    # plt.figure(figsize=(10, 5))
-    if label is not None:
+    MAG_DISPLAY = {
+        'mag_magfit': ('MagFit', 'red'),
+        'mag_epd':    ('EPD',    'blue'),
+        'mag_tfa':    ('TFA',    'green'),
+    }
+
+    for i, (col, arr) in enumerate(zip(mag_cols, mag_arrays)):
+        display_name, color = MAG_DISPLAY[col]
         plt.scatter(
-            bjd, mag_magfit, s=10, color=color or 'red', alpha=0.5,
-            label=f'{label} MagFit', zorder=2
+            X, arr, s=10, color=color, alpha=0.5,
+            label=display_name, zorder=len(mag_cols) - i,
         )
-        plt.scatter(
-            bjd, mag_epd, s=10, color=color or 'blue', alpha=0.5,
-            label=None if label_magfit_only else f'{label} EPD', zorder=1
-        )
-    else:
-        plt.scatter(bjd, mag_magfit, s=10, color=color or 'red', alpha=0.5, label='MagFit', zorder=2)
-        plt.scatter(bjd, mag_epd, s=10, color=color or 'blue', alpha=0.5, label='EPD', zorder=1)
 
     plt.gca().invert_yaxis()  # Magnitude axis is inverted
     plt.xlabel(xlabel, fontdict={"fontweight":"bold", 'fontsize':14})
     plt.ylabel("Magnitude", fontdict={"fontweight":"bold", 'fontsize':14})
-    # plt.ylim(0.7, -0.5)
     plt.grid(True)
     plt.legend()
-    # plt.savefig(f'{object_name}_Chn_or_photref_{chn_or_phref}',dpi=400)
-    # if mode == 'single':
-    #     if photref_dict and chn_or_phref in photref_dict:
-    #         title_part = f"{chn_or_phref}: {photref_dict[chn_or_phref]}"
-    #     else:
-    #         title_part = chn_or_phref
-    #     plt.title(f'{object_name} - {sep_by}: {title_part}', fontdict={"fontweight":"bold", 'fontsize':12})
-    #     plt.show()
 
-    # Set ylim based on IQR
-    all_mags = np.concatenate([mag_epd, mag_magfit])
+    all_mags = np.concatenate(mag_arrays)
     valid = ~np.isnan(all_mags)
     if valid.any():
         q1, q3 = np.percentile(all_mags[valid], [10, 90])
         iqr = q3 - q1
-        lower = q1 - 3 * iqr
-        upper = q3 + 5 * iqr
-        plt.ylim(upper, lower)
+        plt.ylim(q3 + 5 * iqr, q1 - 3 * iqr)
     else:
         plt.ylim(0.7, -0.5)  # fallback
 
@@ -378,6 +394,7 @@ def main():
 
     args = parse_arguments()
     lc_file = args.lc_file
+    mag_types = args.mag_types
     gaia_id = lc_file.split('/')[-1].split('.')[0].split('_')[1]
     aperture = args.aperture
     period = args.period
@@ -391,145 +408,134 @@ def main():
     binning_size = float(args.binning[1]) if args.binning else None
     save_or_show = args.save_or_show_plot
 
-    data, photref_dict = read_lc(lc_file, aperture, sep_by)
-
+    data, photref_dict = read_lc(lc_file, aperture, sep_by, mag_types)
     if args.selected:
         selected = args.selected
         data = {k: v for k, v in data.items() if k in selected}
         if photref_dict:
             photref_dict = {k: v for k, v in photref_dict.items() if k in selected}
 
+    # Derive mag columns from data (anything that isn't 'bjd')
+    sample_df = next(iter(data.values()))
+    mag_cols = [c for c in sample_df.columns if c != 'bjd']
+
     if mode == 'folded':
-        if args.folded_color:
-            cmap = plt.get_cmap('tab20')
-            xlabel = "Phase" if period else "BJD - 2450000"
+        # if args.folded_color:
+        #     cmap = plt.get_cmap('tab20')
+        #     xlabel = "Phase" if period else "BJD - 2450000"
 
-            for idx, chn_or_phref in enumerate(sorted(data.keys())):
-                df = data[chn_or_phref]
-                if period:
-                    bjd_or_phase = calculate_phase(df['bjd'].values, period, epoch)
-                else:
-                    bjd_or_phase = df['bjd'].values - 2450000
+        #     for idx, chn_or_phref in enumerate(sorted(data.keys())):
+        #         df = data[chn_or_phref]
+        #         bjd_or_phase = (
+        #             calculate_phase(df['bjd'].values, period, epoch)
+        #             if period else df['bjd'].values - 2450000
+        #         )
 
-                if binning_method:
-                    x_plot, mag_epd, mag_magfit = apply_binning(
-                        df, bjd_or_phase, binning_method, binning_size
-                    )
-                else:
-                    x_plot = bjd_or_phase
-                    mag_epd = df['mag_epd'].values
-                    mag_magfit = df['mag_magfit'].values
+        #         if binning_method:
+        #             x_plot, *mag_arrays = apply_binning(
+        #                 df, bjd_or_phase, binning_method, binning_size
+        #             )
+        #         else:
+        #             x_plot = bjd_or_phase
+        #             mag_arrays = [df[col].values for col in mag_cols]
 
-                if photref_dict and chn_or_phref in photref_dict:
-                    title_part = f"{chn_or_phref}) {photref_dict[chn_or_phref]}"
-                else:
-                    title_part = str(chn_or_phref)
+        #         title_part = (
+        #             f"{chn_or_phref}) {photref_dict[chn_or_phref]}"
+        #             if photref_dict and chn_or_phref in photref_dict
+        #             else str(chn_or_phref)
+        #         )
 
-                plot_lc(
-                    x_plot,
-                    mag_epd,
-                    mag_magfit,
-                    xlabel,
-                    color=cmap(idx % cmap.N),
-                    label=title_part,
-                    label_magfit_only=True
-                )
+        #         plot_lc(
+        #             x_plot,
+        #             *mag_arrays, mag_cols,
+        #             xlabel,
+        #             color=cmap(idx % cmap.N),
+        #             label=title_part,
+        #             label_magfit_only=True
+        #         )
 
-            if period:
-                if TESS_plot:
-                    plot_TESS_lc(gaia_id, period, epoch, text)
-                elif GAIA_plot:
-                    plot_Gaia_lc(gaia_id, period, epoch, text)
+        #     if period:
+        #         if TESS_plot:
+        #             plot_TESS_lc(gaia_id, period, epoch, text)
+        #         elif GAIA_plot:
+        #             plot_Gaia_lc(gaia_id, period, epoch, text)
 
-            plt.title(
-                f'Gaia {gaia_id} - separated by: {sep_by}',
-                fontdict={"fontweight":"bold", 'fontsize':12}
+        #     plt.title(
+        #         f'Gaia {gaia_id} - separated by: {sep_by}',
+        #         fontdict={"fontweight":"bold", 'fontsize':12}
+        #     )
+        #     plt.legend(fontsize=8, loc='best')
+        #     if save_or_show == 'save':
+        #         plt.savefig(f'Gaia_{gaia_id}_sepby_{sep_by}_folded_color_aperture_{aperture}', dpi=400)
+        #     elif save_or_show == 'show':
+        #         plt.show()
+        # else:
+        combined_df = pd.concat(
+            [data[k] for k in sorted(data.keys())],
+            ignore_index=True
+        )
+
+        bjd_or_phase = (
+            calculate_phase(combined_df['bjd'].values, period, epoch)
+            if period else combined_df['bjd'].values - 2450000
+        )
+        xlabel = "Phase" if period else "BJD - 2450000"
+        
+        if period:
+            if TESS_plot:
+                plot_TESS_lc(gaia_id, period, epoch, text)
+            elif GAIA_plot:
+                plot_Gaia_lc(gaia_id, period, epoch, text)
+        
+        if binning_method:
+            x_plot, *mag_arrays = apply_binning(
+                combined_df, bjd_or_phase, binning_method, binning_size, mag_cols
             )
-            plt.legend(fontsize=8, loc='best')
-            if save_or_show == 'save':
-                plt.savefig(f'Gaia_{gaia_id}_sepby_{sep_by}_folded_color_aperture_{aperture}', dpi=400)
-            elif save_or_show == 'show':
-                plt.show()
         else:
-            all_bjds_list_of_arrays = []
-            all_mag_epd_list_of_arrays = []
-            all_mag_magfit_list_of_arrays = []
-            
-            for chn_or_phref in sorted(data.keys()):
-                df = data[chn_or_phref]
-                all_bjds_list_of_arrays.append(df['bjd'].values)  # combination of separate arrays
-                all_mag_epd_list_of_arrays.append(df['mag_epd'].values)
-                all_mag_magfit_list_of_arrays.append(df['mag_magfit'].values)
-            
-            all_bjds = np.concatenate(all_bjds_list_of_arrays)  # make one big array of bjd values
-            all_mag_epd = np.concatenate(all_mag_epd_list_of_arrays)
-            all_mag_magfit = np.concatenate(all_mag_magfit_list_of_arrays)
-            
-            combined_df = pd.DataFrame({
-                'bjd': all_bjds,
-                'mag_epd': all_mag_epd,
-                'mag_magfit': all_mag_magfit
-            })
-
-            if period:
-                bjd_or_phase = calculate_phase(combined_df['bjd'].values, period, epoch)
-                xlabel = "Phase"
-                if TESS_plot:
-                    plot_TESS_lc(gaia_id, period, epoch, text)
-                elif GAIA_plot:
-                    plot_Gaia_lc(gaia_id, period, epoch, text)
-            else:
-                bjd_or_phase = combined_df['bjd'].values - 2450000
-                xlabel = "BJD - 2450000"
-            
-            if binning_method:
-                x_plot, mag_epd, mag_magfit = apply_binning(
-                    combined_df, bjd_or_phase, binning_method, binning_size
-                )
-            else:
-                x_plot = bjd_or_phase
-                mag_epd = combined_df['mag_epd'].values
-                mag_magfit = combined_df['mag_magfit'].values
-            
-            plot_lc(x_plot, mag_epd, mag_magfit, xlabel)
-            plt.title(
-                f'Gaia {gaia_id} - separated by: {sep_by}',
-                fontdict={"fontweight":"bold", 'fontsize':12}
-            )
-            # plt.ylim(0.7, -0.5)
-            if save_or_show == 'save':
-                plt.savefig(f'Gaia_{gaia_id}_sepby_{sep_by}_folded_aperture_{aperture}', dpi=400)
-            elif save_or_show == 'show':
-                plt.show()
+            x_plot = bjd_or_phase
+            mag_arrays = [combined_df[col].values for col in mag_cols]
+        
+        plot_lc(x_plot, *mag_arrays, mag_cols=mag_cols, xlabel=xlabel)
+        plt.title(
+            f'Gaia {gaia_id} - separated by: {sep_by}',
+            fontdict={"fontweight":"bold", 'fontsize':12}
+        )
+        if save_or_show == 'save':
+            plt.savefig(f'Gaia_{gaia_id}_sepby_{sep_by}_folded_aperture_{aperture}', dpi=400)
+        elif save_or_show == 'show':
+            plt.show()
 
     elif mode == 'single':
         for chn_or_phref in sorted(data.keys()):
             df = data[chn_or_phref]
             
+            bjd_or_phase = (
+                calculate_phase(df['bjd'].values, period, epoch)
+                if period else df['bjd'].values - 2450000
+            )
+            xlabel = "Phase" if period else "BJD - 2450000"
+
             if period:
-                bjd_or_phase = calculate_phase(df['bjd'].values, period, epoch)
                 xlabel = "Phase"
                 if TESS_plot:
                     plot_TESS_lc(gaia_id, period, epoch, text)
                 elif GAIA_plot:
                     plot_Gaia_lc(gaia_id, period, epoch, text)
-            else:
-                bjd_or_phase = df['bjd'].values - 2450000
-                xlabel = "BJD - 2450000"
             
             if binning_method:
-                x_plot, mag_epd, mag_magfit = apply_binning(
-                    df, bjd_or_phase, binning_method, binning_size)
+                x_plot, *mag_arrays = apply_binning(
+                    df, bjd_or_phase, binning_method, binning_size, mag_cols
+                )
             else:
                 x_plot = bjd_or_phase
-                mag_epd = df['mag_epd'].values
-                mag_magfit = df['mag_magfit'].values
+                mag_arrays = [df[col].values for col in mag_cols]
             
-            plot_lc(x_plot, mag_epd, mag_magfit,xlabel)
-            if photref_dict and chn_or_phref in photref_dict:
-                title_part = f"{chn_or_phref}) {photref_dict[chn_or_phref]}"
-            else:
-                title_part = chn_or_phref
+            plot_lc(x_plot, *mag_arrays, mag_cols=mag_cols, xlabel=xlabel)
+            title_part = (
+                f"{chn_or_phref}) {photref_dict[chn_or_phref]}"
+                if photref_dict and chn_or_phref in photref_dict
+                else str(chn_or_phref)
+            )
             plt.title(f'{gaia_id} - {sep_by}: {title_part}', fontdict={"fontweight":"bold", 'fontsize':12})
             if save_or_show == 'save':
                 plt.savefig(f'Gaia_{gaia_id}_sepby_{sep_by}_{title_part}_aperture_{aperture}', dpi=400)
