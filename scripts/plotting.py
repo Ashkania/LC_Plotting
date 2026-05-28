@@ -218,29 +218,29 @@ def read_lc(hdf5_file, aperture=4, sep_by='photref', mag_types=['magfit']):
                 
     return data, photref_dict
 
-def apply_binning(df, x_values, method, bin_size):   ############# edit with new mag_cols #############
+def apply_binning(df, x_values, method, bin_size, mag_cols):
     """
     Apply binning to light curve data.
-    
+
     Parameters:
     -----------
     df : DataFrame
-        DataFrame with 'mag_epd', 'mag_magfit' columns
+        DataFrame containing the magnitude columns listed in mag_cols
     x_values : array
         Time or phase values (bjd or phase)
     method : str
         'time' or 'phase'
     bin_size : float
         Size of bins (minutes for time, number of phase divisions for phase)
-    
+    mag_cols : list of str
+        Magnitude column names to bin (e.g. ['mag_magfit', 'mag_epd', 'mag_tfa'])
+
     Returns:
     --------
     binned_x : array
-        Binned x values (bin centers)
-    binned_mag_epd : array
-        Binned magnitudes (epd)
-    binned_mag_magfit : array
-        Binned magnitudes (magfit)
+        Binned x values (bin medians)
+    *binned_mags : arrays
+        One binned magnitude array per entry in mag_cols, in the same order
     """
     if method == 'time':
         # bin_size is in minutes, convert to days
@@ -249,20 +249,15 @@ def apply_binning(df, x_values, method, bin_size):   ############# edit with new
     elif method == 'phase':
         # Divide 0-1 phase into bin_size divisions
         bins = np.linspace(0, 1, int(bin_size) + 1)
-    
-    # Create a temporary DataFrame for binning
+
     temp_df = df.copy()
     temp_df['x'] = x_values
     temp_df['bin'] = pd.cut(x_values, bins=bins)
-    
-    # Group by bins and compute median
-    binned = temp_df.groupby('bin', observed=True).agg({
-        'x': 'median',
-        'mag_epd': 'median',
-        'mag_magfit': 'median'
-    }).dropna()
-    
-    return binned['x'].values, binned['mag_epd'].values, binned['mag_magfit'].values ####################3 edit #######################################
+
+    agg_spec = {'x': 'median', **{col: 'median' for col in mag_cols}}
+    binned = temp_df.groupby('bin', observed=True).agg(agg_spec).dropna()
+
+    return (binned['x'].values, *(binned[col].values for col in mag_cols))
 
 def calculate_phase(bjd, period, epoch):
     """
