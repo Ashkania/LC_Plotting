@@ -1,26 +1,25 @@
-A: Running gaia_to_toi.py
 
-Utilities for plotting individual lightcurves.
-    
-    Command line arguments:
+## A. Extract TOIs
+
+Command line arguments:
+
     --lc-path: The path containing .h5 lc files.
     --tic-gaia-fname: The output file to write tic to gaia mappings.
         --tic-gaia-file: if we already have it, specify the file path
     --toi-gaia-period-fname: The output file to write toi, gaia, period mappings.
     --lc-catalog: The input file containing the light curve catalog.
 
-   1. We have the LCs, want to extract their Gaia ids:
-        lcs_to_gaia_ids(lc_path) -> gaia_ids
-        It goes over the LCs, and extract their Gaia Ids from their names,
-        and return the unique set of them.
+   1. We have our LCs and want to extract their Gaia ids:  
+        lcs_to_gaia_ids(lc_path) -> gaia_ids  
+        It goes over the LCs, and extract their Gaia Ids from their names, and return the unique set of them.
     
-   (\*). We need the FOV and mag range of the LCs to be used in step 3.*** 
+   \* We need the FOV and mag range of the LCs to be used in step 3.*** 
         find_fov_of_lcs(lc_catalog) -> fov_mag_range = {ra, dec, mag_{min, max}}
         It goes over the LC catalog and find the range (min, max) of ra, dec, and mag.
 
-   3. To extract TICs from Gaia ids, we have three options:
+   2. To extract TICs from Gaia ids, we have three options:
         
-        3.*. If we already have the tic_gaia mapping from a previous run,
+        2.*. If we already have the tic_gaia mapping from a previous run,
         we can just read the related file and use it.
 
         query_vizier_n_times(gaia_ids, tic_gaia_fname) -> tic_gaia
@@ -37,7 +36,7 @@ Utilities for plotting individual lightcurves.
         If so, we save the TIC id and Gaia id in a dictionary.
         (we may use this one for a large number of LCs, like > 1000)
 
-   4. Extract TOI IDs and their periods for the FOV of our LCs. 
+   3. Extract TOI IDs and their periods for the FOV of our LCs. 
         query_toi_in_fov(tic_gaia, cmdline_args.toi_gaia_period_fname, fov_mag_range) -> None
         Finally, it queries TOI table in exoplanet archive in the range in the FOV of the LCs
         and check if any of those TOI have a TIC id in our list. If so, it extracts the period.
@@ -51,71 +50,38 @@ Utilities for plotting individual lightcurves.
             python gaia_to_toi.py --lc-path /path/to/lcs/ --lc-catalog /path/to/lc_catalog.fits
         2. When you already have tic_gaia.txt file:
             python gaia_to_toi.py --lc-path /path/to/lcs/ --lc-catalog /path/to/lc_catalog.fits --tic-gaia-file /path/to/tic_gaia.txt
-
-
-B: Runnig plotting.py
-
-
-# Plot LightCurve
+## B. Plot LightCurve
 
 When the process of raw images using AutoWISP finishes, the user needs to plot the interesting objects. This repository help them to achieve it.  
 
 How this project works:
 
-* Reading the LC data from the hdf5 file. It includes:  
+### 1. Read data from LC  
+What is read:  
   * BJD
-  * Fitted magnitudes
-  * Fitted magnitudes that went through EPD (External Parameter Decorrelation)
+  * Fitted magnitudes 
   * Channels index (If we have a color image with RGGB channels)
   * Photrefs index (Equals to the number of referance frames used in magnitude fitting step)  
+  If we have post processing, it could also have:
+  * Fitted magnitudes that went through EPD (External Parameter Decorrelation)
+  * EPD magnitudes that went through TFA (Trend Filtering Algorithm)
+
+Magnitudes are median centered based on the photrefs.
   
+Based on the sep-by argument (by channel or photref), data dictionary is constructed to contain separate DataFrames with columns: BJD, Magfited magnitudes, and/or EPD. TFA magnitudes for each channel/photref such as:
 
-  
-  Based on the folding method (by channel or photref), data dictionary is constructed to contain separate DataFrames with columns: BJD, Magfited magnitudes, and EPD magnitudes for each channel/photref such as:
+    data = {
+        0: DataFrame for channel/photref 0,
+        1: DataFrame for channel/photref 1,
+        ...
+    }
 
-         data = {
-              0: DataFrame for channel/channel_camera 0,
-              1: DataFrame for channel/channel_camera 1,
-              ...
-         }
-We can choose to discard some of data for a particular channel/photref in this step.
+### 2. Discard some data
+We can use argument selected to choose a subset of channels/photrefs and discard the rest.
 
-Then, based on the selected plotting mode, we plot one for each channel/photref separately (single mode) or combine all channels/photrefs into one plo (folded mode).
+### 3. Plot based on the mode
+  3.1. Folded
+  We make one combined plot from all data we have. In the case of having a period for the object, we can have TESS and/or GAIA data plotted on top of ours. If we have selected sep-by channel, we would have different colors for each channel in our plot. We may bin our data based on phase or time.
 
-
-## Command line arguments
-positional arguments:  
-* lc_file: Path to the light curve HDF5 file
-
-options:  
-  * --aperture:  
-  Aperture number to plot
-  * --period  
-  Period in days for phase folding
-  * --epoch  
-  Reference epoch (t0) for phase folding
-  * --text  
-  Printed text in the plot
-  * --sep-by  
-  Whether to separate data points by 'channel' or 'photref(=channel and camera)'
-  * --mode {single,folded} Plot each channel/photrefs(=channel and camera)
-                        separately orfold all channels/photrefs(=channel
-                        and cameras) on top of each other(default:
-                        'single')
-  --binning METHOD SIZE
-                        Binning method (time/phase) and size (minutes for
-                        time, points for phase)(optional, e.g. --binning
-                        time 10 or --binning phase 100)
-  --selected [SELECTED ...]
-                        List of photref/channel indices to plot (default:
-                        all)
-  --TESS-plot           Plot TESS light curve for the same object on top of
-                        the PANOPTES data
-  --GAIA-plot           Plot GAIA light curve for the same object on top of
-                        the PANOPTES data
-  --save-or-show-plot {save,show}
-                        Whether to save the plot as a PNG file or display
-                        it (default: 'show')
-  --folded-color        When used with --mode folded, plot each
-                        photref/channel in a separate color on the same
-                        folded figure
+  3.2. Single  
+  We make one plot for each channel/photref. Similarly, in the case of having a period for the object, we can have TESS and/or GAIA data plotted on top of ours, and we may bin our data based on phase or time.
