@@ -128,6 +128,14 @@ def parse_arguments():
         choices=['save', 'show'],
         help="Whether to save the plot as a PNG file or display it (default: 'show')"
     )
+    parser.add_argument(
+        "--ylim",
+        nargs=2,
+        type=float,
+        default=None,
+        metavar=('YMIN', 'YMAX'),
+        help="Y-axis limits for the plot (optional, e.g. --ylim -0.5 0.5)"
+    )
 
     return parser.parse_args()
 
@@ -430,6 +438,7 @@ def main():
     binning_method = args.binning[0] if args.binning else None
     binning_size = float(args.binning[1]) if args.binning else None
     save_or_show = args.save_or_show_plot
+    ylim = args.ylim
 
     data, name_dict, channel_color_dict = read_lc(lc_file, aperture, sep_by, mag_types)
     if args.selected:
@@ -501,6 +510,7 @@ def main():
             title = f'Gaia {gaia_id} - folded'
 
         plt.title(title, fontdict={"fontweight":"bold", 'fontsize':12})
+        plt.ylim(ylim) if ylim else None
         if save_or_show == 'save':
             plt.savefig(f'Gaia_{gaia_id}_folded_folded_aperture_{aperture}', dpi=400)
         elif save_or_show == 'show':
@@ -538,6 +548,7 @@ def main():
                 else str(chn_or_phref)
             )
             plt.title(f'{gaia_id} - {sep_by}: {title_part}', fontdict={"fontweight":"bold", 'fontsize':12})
+            plt.ylim(ylim) if ylim else None
             if save_or_show == 'save':
                 plt.savefig(f'Gaia_{gaia_id}_sepby_{sep_by}_{title_part}_aperture_{aperture}', dpi=400)
             elif save_or_show == 'show':
