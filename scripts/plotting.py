@@ -301,10 +301,42 @@ def calculate_phase(bjd, period, epoch):
     phase = ((bjd - epoch) / period) % 1.0
     return phase
 
-def plot_TESS_lc(gaia_id, period, epoch, text=None):
+def calculate_magnitude_offset(lc_phase, lc_magnitudes, tess_phase, tess_magnitudes):
+    """
+    Calculate the LC-to-TESS offset using their overlapping phase range.
+    """
+
+    lc_phase = np.asarray(lc_phase, dtype=float)
+    lc_magnitudes = np.asarray(lc_magnitudes, dtype=float)
+    tess_phase = np.asarray(tess_phase, dtype=float)
+    tess_magnitudes = np.asarray(tess_magnitudes, dtype=float)
+
+    lc_valid = np.isfinite(lc_phase) & np.isfinite(lc_magnitudes)
+    tess_valid = np.isfinite(tess_phase) & np.isfinite(tess_magnitudes)
+
+    if not lc_valid.any() or not tess_valid.any():
+        return 0.0
+
+    common_min = max(lc_phase[lc_valid].min(), tess_phase[tess_valid].min())
+    common_max = min(lc_phase[lc_valid].max(), tess_phase[tess_valid].max())
+    if common_min > common_max:
+        print("Warning: LC and TESS phase ranges do not overlap; no offset applied.")
+        return 0.0
+
+    lc_in_range = lc_valid & (lc_phase >= common_min) & (lc_phase <= common_max)
+    tess_in_range = tess_valid & (tess_phase >= common_min) & (tess_phase <= common_max)
+    if not lc_in_range.any() or not tess_in_range.any():
+        return 0.0
+
+    return (
+        np.nanmedian(lc_magnitudes[lc_in_range])
+        - np.nanmedian(tess_magnitudes[tess_in_range])
+    )
+
+def plot_TESS_lc(gaia_id, period, epoch, lc_phase, lc_magnitudes, text=None):
     """
     Plot TESS light curve for the given Gaia ID, period, and epoch.
-    Downloads the most recent SPOC light curve.
+    Downloads and plots all available SPOC light curves.
     """
     gaia_id = 'Gaia DR3 ' + gaia_id
     search = lk.search_lightcurve(gaia_id, mission="TESS", author="SPOC")
@@ -313,27 +345,49 @@ def plot_TESS_lc(gaia_id, period, epoch, text=None):
         search = lk.search_lightcurve(gaia_id, mission="TESS")
         if search is None or len(search) == 0:
             print(f"No TESS data found for {gaia_id}. Skipping TESS plot.")
-            return
+            return 0.0
     else:
         print(search)
-    # Sort by t_min descending to get the most recent
-    search = search[np.argsort(search.table['t_min'])[::-1]]
-    print(f"Downloading most recent SPOC LC: {search[0]}")
-    lc = search[0].download()
-    lc = lc.remove_nans().normalize()
-    lc = lc.flatten(window_length=401)
+    print(f"Downloading {len(search)} TESS light curves...")
+    light_curves = search.download_all()
+    tess_phase_arrays = []
+    tess_mag_arrays = []
 
-    time_tess = lc.time.value + 2457000
-    phase = ((time_tess - epoch) / period) % 1
-    flux_tess = lc.flux.value
-    mag_tess = -2.5 * np.log10(flux_tess)
+    for index, lc in enumerate(light_curves):
+        lc = lc.remove_nans().normalize()
+        lc = lc.flatten(window_length=401)
 
-    plt.scatter(phase, mag_tess, s=1, color='blue', alpha=0.7, label="TESS", zorder=2)
+        time_tess = lc.time.value + 2457000
+        phase = ((time_tess - epoch) / period) % 1
+        flux_tess = lc.flux.value
+        mag_tess = -2.5 * np.log10(flux_tess)
+        tess_phase_arrays.append(phase)
+        tess_mag_arrays.append(mag_tess)
+
+    tess_phase = np.concatenate(tess_phase_arrays) if tess_phase_arrays else np.array([])
+    tess_magnitudes = np.concatenate(tess_mag_arrays) if tess_mag_arrays else np.array([])
+    magnitude_offset = calculate_magnitude_offset(
+        lc_phase, lc_magnitudes, tess_phase, tess_magnitudes
+    )
+
+    for index, (phase, mag_tess) in enumerate(zip(tess_phase_arrays, tess_mag_arrays)):
+
+        plt.scatter(
+            phase,
+            mag_tess,
+            s=1,
+            color='blue',
+            alpha=0.5,
+            label="TESS" if index == 0 else None,
+            zorder=2,
+        )
+
     plt.text(
         0.95, 0.04,
         f'TESS Mag: {text}', transform=plt.gca().transAxes,
         fontsize=10, ha='right', va='bottom'
         )
+    return magnitude_offset
 
 def plot_Gaia_lc(gaia_id, period, epoch, text=None):
     datalink = Gaia.load_data(
@@ -381,7 +435,7 @@ def _scatter_lc(X, *mag_arrays, mag_cols, color=None, label=None):
         plt.scatter(
             X, arr, s=10,
             color=color if color is not None else default_color,
-            alpha=0.5,
+            alpha=0.8,
             label=(label if i == 0 else None) if label is not None else default_name,
             zorder=len(mag_cols) - i,
         )
@@ -457,14 +511,27 @@ def main():
         xlabel = "Phase" if period else "BJD - 2450000"
 
         if period:
-            if TESS_plot:
-                plot_TESS_lc(gaia_id, period, epoch, text)
             if GAIA_plot:
                 plot_Gaia_lc(gaia_id, period, epoch, text)
 
         if sep_by == 'channel' and channel_color_dict:
             # Same frame, but color each data point by its channel.
             all_mags_collected = []
+            magnitude_offset = 0.0
+            if period and TESS_plot:
+                alignment_phases = [
+                    calculate_phase(data[chn]['bjd'].values, period, epoch)
+                    for chn in sorted(data.keys())
+                ]
+                alignment_magnitudes = [
+                    data[chn][mag_cols[0]].values for chn in sorted(data.keys())
+                ]
+                magnitude_offset = plot_TESS_lc(
+                    gaia_id, period, epoch,
+                    np.concatenate(alignment_phases),
+                    np.concatenate(alignment_magnitudes),
+                    text,
+                )
             for chn in sorted(data.keys()):
                 df = data[chn]
                 bjd_or_phase = (
@@ -478,6 +545,7 @@ def main():
                 else:
                     x_plot = bjd_or_phase
                     mag_arrays = [df[col].values for col in mag_cols]
+                mag_arrays = [array - magnitude_offset for array in mag_arrays]
 
                 _scatter_lc(
                     x_plot, *mag_arrays, mag_cols=mag_cols,
@@ -498,6 +566,15 @@ def main():
                 if period else combined_df['bjd'].values - 2450000
             )
 
+            magnitude_offset = 0.0
+            if period and TESS_plot:
+                magnitude_offset = plot_TESS_lc(
+                    gaia_id, period, epoch,
+                    bjd_or_phase,
+                    combined_df[mag_cols[0]].values,
+                    text,
+                )
+
             if binning_method:
                 x_plot, *mag_arrays = apply_binning(
                     combined_df, bjd_or_phase, binning_method, binning_size, mag_cols
@@ -505,14 +582,20 @@ def main():
             else:
                 x_plot = bjd_or_phase
                 mag_arrays = [combined_df[col].values for col in mag_cols]
+            mag_arrays = [array - magnitude_offset for array in mag_arrays]
 
             plot_lc(x_plot, *mag_arrays, mag_cols=mag_cols, xlabel=xlabel)
             title = f'Gaia {gaia_id} - folded'
 
         plt.title(title, fontdict={"fontweight":"bold", 'fontsize':12})
         plt.ylim(ylim) if ylim else None
+        # plt.xlim(0.83, 0.86) if period else None
         if save_or_show == 'save':
-            plt.savefig(f'Gaia_{gaia_id}_folded_folded_aperture_{aperture}', dpi=400)
+            plt.savefig(
+                f'Gaia_{gaia_id}_folded_folded_aperture_{aperture}',
+                dpi=400,
+                format='pdf'
+                )
         elif save_or_show == 'show':
             plt.show()
 
@@ -529,9 +612,18 @@ def main():
             if period:
                 xlabel = "Phase"
                 if TESS_plot:
-                    plot_TESS_lc(gaia_id, period, epoch, text)
+                    magnitude_offset = plot_TESS_lc(
+                        gaia_id, period, epoch,
+                        bjd_or_phase,
+                        df[mag_cols[0]].values,
+                        text,
+                    )
+                else:
+                    magnitude_offset = 0.0
                 if GAIA_plot:
                     plot_Gaia_lc(gaia_id, period, epoch, text)
+            else:
+                magnitude_offset = 0.0
             
             if binning_method:
                 x_plot, *mag_arrays = apply_binning(
@@ -540,6 +632,7 @@ def main():
             else:
                 x_plot = bjd_or_phase
                 mag_arrays = [df[col].values for col in mag_cols]
+            mag_arrays = [array - magnitude_offset for array in mag_arrays]
             
             plot_lc(x_plot, *mag_arrays, mag_cols=mag_cols, xlabel=xlabel)
             title_part = (
